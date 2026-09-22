@@ -4,13 +4,14 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 @TeleOp
+
 public class FirstTest extends OpMode {
 
     private boolean shouldStop = false;
 
     @Override
     public void init() {
-        telemetry.addData("Status", "Initialized");
+        telemetry.addData("Status", "Monty is skibidibidi bop");
     }
 /*
     @Override
@@ -39,8 +40,10 @@ public class FirstTest extends OpMode {
 */
 @Override
 public void loop() {
-
-
+    double right_y=gamepad1.right_stick_y*-0.5;
+    telemetry.addData("circle_button", gamepad1.circle);
+    telemetry.addData("right_y", right_y);
+    telemetry.addData("right_x", gamepad1.right_stick_x);
     telemetry.addData("left_x", gamepad1.left_stick_x);
     telemetry.addData("left_y", gamepad1.left_stick_y);
     telemetry.addData("x button", gamepad1.x);
