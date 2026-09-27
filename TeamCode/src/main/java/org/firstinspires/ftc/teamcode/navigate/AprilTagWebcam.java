@@ -24,10 +24,14 @@ public class AprilTagWebcam {
     private VisionPortal visionPortal;
     private final List<AprilTagDetection> detectedTags = new ArrayList<>();
 
+    public double x_value;
+    public boolean tagDetected = false;
+
     private Telemetry telemetry;
 
     public void init(HardwareMap hwMap, Telemetry telemetry){
         this.telemetry = telemetry;
+        tagDetected = false;
         aprilTagProcessor = new AprilTagProcessor.Builder()
                 .setDrawTagID(true)
                 .setDrawTagOutline(true)
@@ -44,6 +48,7 @@ public class AprilTagWebcam {
     }
 
     public void updateDetections(){
+        x_value = 0;
         List<AprilTagDetection> newDetections = aprilTagProcessor.getDetections();
         boolean hasDetections = !newDetections.isEmpty();
 
@@ -52,7 +57,7 @@ public class AprilTagWebcam {
 
         telemetry.clearAll();
         telemetry.addData("AprilTag found", hasDetections ? "Y" : "N");
-
+        tagDetected = hasDetections;
         if (hasDetections) {
             renderDetections();
         }
@@ -86,6 +91,7 @@ public class AprilTagWebcam {
                     telemetry.addLine(String.format(Locale.US, "XYZ %6.1f %6.1f %6.1f  (inch)", detection.ftcPose.x, detection.ftcPose.y, detection.ftcPose.z));
                     telemetry.addLine(String.format(Locale.US, "PRY %6.1f %6.1f %6.1f  (deg)", detection.ftcPose.pitch, detection.ftcPose.roll, detection.ftcPose.yaw));
                     telemetry.addLine(String.format(Locale.US, "RBE %6.1f %6.1f %6.1f  (inch, deg, deg)", detection.ftcPose.range, detection.ftcPose.bearing, detection.ftcPose.elevation));
+                    x_value = detection.ftcPose.x;
                 } else {
                     telemetry.addData("ID", singleDet.id);
                     telemetry.addLine(String.format(Locale.US, "\n==== (ID %d) Unknown", singleDet.id));
@@ -93,6 +99,7 @@ public class AprilTagWebcam {
                 }
             } else {
                 AprilTagClusterDetection clusterDet = (AprilTagClusterDetection) detection;
+                x_value = detection.ftcPose.x;
                 telemetry.addData("ID", "N/A (cluster)");
                 telemetry.addLine(String.format("\n==== Tag Cluster (%s)", clusterDet.metadata.name));
                 telemetry.addLine(String.format(Locale.US, "Percent tags found: %d", clusterDet.percentClusterFound));
