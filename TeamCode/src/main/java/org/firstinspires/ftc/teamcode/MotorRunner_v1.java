@@ -7,14 +7,9 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.util.Range;
-import com.qualcomm.robotcore.util.RobotLog;
 
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity;
-import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
-
-@TeleOp(name = "MotorRunner", group = "TeleOp")
-public class MotorRunner extends OpMode {
+@TeleOp(name = "MotorRunner_v1", group = "TeleOp")
+public class MotorRunner_v1 extends OpMode {
 
 	private static final double JOYSTICK_DEADBAND = 0.08;
 
@@ -112,7 +107,7 @@ public class MotorRunner extends OpMode {
 		telemetry.addData("Left Stick Y (PID)", "%.3f", leftStickY);
 		telemetry.addData("Deadband", JOYSTICK_DEADBAND);
 
-		showImuInfo();
+		//showImuInfo();
 		telemetry.update();
 	}
 
@@ -212,32 +207,6 @@ public class MotorRunner extends OpMode {
 		pidPrevError = 0.0;
 	}
 
-	private void showImuInfo() {
-		YawPitchRollAngles orientation = imu.getRobotYawPitchRollAngles();
-		AngularVelocity angularVelocity = imu.getRobotAngularVelocity(AngleUnit.DEGREES);
-
-		telemetry.addData("IMU Yaw (deg)", "%.2f", orientation.getYaw(AngleUnit.DEGREES));
-		telemetry.addData("IMU Pitch (deg)", "%.2f", orientation.getPitch(AngleUnit.DEGREES));
-		telemetry.addData("IMU Roll (deg)", "%.2f", orientation.getRoll(AngleUnit.DEGREES));
-		telemetry.addData("IMU Yaw Rate (deg/s)", "%.2f", angularVelocity.zRotationRate);
-		telemetry.addData("IMU Pitch Rate (deg/s)", "%.2f", angularVelocity.xRotationRate);
-		telemetry.addData("IMU Roll Rate (deg/s)", "%.2f", angularVelocity.yRotationRate);
-
-		long now = System.currentTimeMillis();
-		if (now - lastImuLogTimeMs >= 250) {
-			RobotLog.ii(
-					"MotorRunner",
-					"IMU yaw=%.2f pitch=%.2f roll=%.2f yawRate=%.2f pitchRate=%.2f rollRate=%.2f",
-					orientation.getYaw(AngleUnit.DEGREES),
-					orientation.getPitch(AngleUnit.DEGREES),
-					orientation.getRoll(AngleUnit.DEGREES),
-					angularVelocity.zRotationRate,
-					angularVelocity.xRotationRate,
-					angularVelocity.yRotationRate
-			);
-			lastImuLogTimeMs = now;
-		}
-	}
 
 	@Override
 	public void stop() {

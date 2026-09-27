@@ -12,7 +12,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.AngularVelocity;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
-@TeleOp(name = "MotorRunner", group = "TeleOp")
+@TeleOp(name = "MotorRunner_v0", group = "TeleOp")
 public class MotorRunner_v0 extends OpMode {
 
 	private static final double JOYSTICK_DEADBAND = 0.08;
