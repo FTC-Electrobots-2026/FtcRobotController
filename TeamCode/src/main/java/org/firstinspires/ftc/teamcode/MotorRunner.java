@@ -19,24 +19,28 @@ public class MotorRunner extends OpMode {
 	private static final double JOYSTICK_DEADBAND = 0.08;
 
 	// PID coefficients for encoder-based control
-	private static final double PID_KP = 0.02;
-	private static final double PID_KI = 0.001;
-	private static final double PID_KD = 0.0;
-	private static final double MAX_RPM = 300.0; // Example: adjust to your motor
+	// These values are tuned to reduce oscillation and jerking
+	private static final double PID_KP = 0.015;    // Proportional gain for responsiveness
+	private static final double PID_KD = 0.015;    // Damping to prevent oscillation
+	private static final double MAX_RPM = 300.0;   // Max RPM for the motor
+	private static final double FEEDFORWARD_FF = 1.0; // Scale factor for feedforward (1.0 = direct stick input)
+	private static final double MIN_POWER = 0.03;  // Minimum power to turn motor
+	private static final double ERROR_DEADZONE = 0.03; // Tighter deadzone for better tracking
 
 	private DcMotorEx leftFront;
 	private IMU imu;
 	private long lastImuLogTimeMs;
 
 	// PID state for left joystick control
-	private double pidIntegral = 0.0;
 	private double pidPrevError = 0.0;
 	private long pidLastTimeMs = 0;
 
 	@Override
 	public void init() {
 		leftFront = hardwareMap.get(DcMotorEx.class, "leftFront");
+		leftFront.setDirection(DcMotor.Direction.REVERSE);
 		leftFront.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+		leftFront.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
 		leftFront.setPower(0.0);
 
 		imu = hardwareMap.get(IMU.class, "imu");
@@ -52,7 +56,6 @@ public class MotorRunner extends OpMode {
 
 		// Reset PID state
 		pidLastTimeMs = 0;
-		pidIntegral = 0.0;
 		pidPrevError = 0.0;
 
 		telemetry.addData("Status", "Initialized");
@@ -76,17 +79,23 @@ public class MotorRunner extends OpMode {
 		double leftStickY = -gamepad1.left_stick_y * 0.5;
 		double targetSpeedFraction = applyDeadband(leftStickY);
 		targetSpeedFraction = Range.clip(targetSpeedFraction, -1.0, 1.0);
-		double pidPower = calculatePidPower(targetSpeedFraction);
+		boolean rightStickActive = Math.abs(rawPower) > 0.0;
+		boolean leftStickActive = Math.abs(targetSpeedFraction) > 0.0;
 
-		// Choose control mode: if right stick is used, go raw; otherwise use left stick with PID
 		double activePower;
 		String controlMode;
-		if (Math.abs(rawPower) > JOYSTICK_DEADBAND) {
+		if (rightStickActive) {
 			activePower = rawPower;
 			controlMode = "RAW (Right Stick)";
-		} else {
-			activePower = pidPower;
+			resetPidState();
+		} else if (leftStickActive) {
+			activePower = calculatePidPower(targetSpeedFraction);
+
 			controlMode = "PID (Left Stick)";
+		} else {
+			activePower = 0.0;
+			controlMode = "STOP";
+			resetPidState();
 		}
 
 		leftFront.setPower(activePower);
@@ -121,30 +130,37 @@ public class MotorRunner extends OpMode {
 	 */
 	private double calculateRpm() {
 		double velocityTicksPerSec = leftFront.getVelocity();
-		// REV HD Hex Motor: 8.3 ticks per revolution (at output)
-		// Adjust this constant for your specific motor
+		// GoBILDA 5203 19:1: 537.7 ticks per revolution (at output shaft)
 		double ticksPerRevolution = 537.7;
 		double rps = velocityTicksPerSec / ticksPerRevolution;
-		double rpm = rps * 60.0;
-		return rpm;
+		return rps * 60.0;
 	}
 
 	/**
 	 * PID controller for target speed control using encoder feedback.
 	 * targetSpeedFraction: -1 to 1 representing desired speed
+	 * Heavily damped to prevent oscillation lock.
 	 */
 	private double calculatePidPower(double targetSpeedFraction) {
+		if (Math.abs(targetSpeedFraction) <= JOYSTICK_DEADBAND) {
+			resetPidState();
+			return 0.0;
+		}
+
 		long now = System.currentTimeMillis();
 
 		if (pidLastTimeMs == 0) {
 			pidLastTimeMs = now;
-			pidIntegral = 0.0;
 			pidPrevError = 0.0;
-			return 0.0;
+			// Start with feedforward power scaled to target speed
+			return targetSpeedFraction * FEEDFORWARD_FF;
 		}
 
 		double dtSec = (now - pidLastTimeMs) / 1000.0;
 		pidLastTimeMs = now;
+
+		// Prevent dt from being too large or too small
+		dtSec = Math.max(0.001, Math.min(0.1, dtSec));
 
 		// Current RPM
 		double currentRpm = calculateRpm();
@@ -152,28 +168,48 @@ public class MotorRunner extends OpMode {
 		// Target RPM based on joystick input
 		double targetRpm = targetSpeedFraction * MAX_RPM;
 
-		// Error: difference between target and current
-		double error = targetRpm - currentRpm;
+		// Normalize error to 0-1 range
+		double normalizedError = (targetRpm - currentRpm) / MAX_RPM;
 
-		// PID terms
-		double pTerm = PID_KP * error;
-		pidIntegral += error * dtSec;
-		pidIntegral = Range.clip(pidIntegral, -1.0, 1.0); // Anti-windup
-		double iTerm = PID_KI * pidIntegral;
+		// Error deadzone: if error is very small, don't correct (prevents oscillation)
+		if (Math.abs(normalizedError) < ERROR_DEADZONE) {
+			// Just use feedforward to maintain speed
+			double power = targetSpeedFraction * FEEDFORWARD_FF;
+			pidPrevError = normalizedError;
+			return power;
+		}
 
+		// Proportional term (very small)
+		double pTerm = PID_KP * normalizedError;
+
+		// Derivative term (strong damping) - the key to stopping oscillation
 		double dTerm = 0.0;
 		if (dtSec > 0) {
-			double errorRate = (error - pidPrevError) / dtSec;
+			double errorRate = (normalizedError - pidPrevError) / dtSec;
 			dTerm = PID_KD * errorRate;
 		}
 
-		pidPrevError = error;
+		pidPrevError = normalizedError;
 
-		// Calculate power output
-		double power = pTerm + iTerm + dTerm;
+		// Feedforward term: apply power proportional to stick input
+		double feedForward = targetSpeedFraction * FEEDFORWARD_FF;
+
+		// Calculate power output (P + D only, no I term)
+		double power = feedForward + pTerm + dTerm;
+
+		// Apply minimum power threshold to overcome static friction
+		if (Math.abs(power) < MIN_POWER && Math.abs(power) > 0) {
+			power = Math.copySign(MIN_POWER, power);
+		}
+
 		power = Range.clip(power, -1.0, 1.0);
 
 		return power;
+	}
+
+	private void resetPidState() {
+		pidLastTimeMs = 0;
+		pidPrevError = 0.0;
 	}
 
 	private void showImuInfo() {
