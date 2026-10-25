@@ -10,33 +10,51 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import java.util.Locale;
 
 /**
- * Wheel-motor-based odometry / localization for a mecanum drivetrain.
+ * This class is the robot's "where am I on the field?" calculator.
  *
- * <p>This class is built around the hardware details you provided:</p>
- * <ul>
- *     <li>goBILDA GripForce Mecanum Wheel Set, 104 mm diameter</li>
- *     <li>goBILDA 5202 Series Yellow Jacket motor, 19.2:1, 312 RPM</li>
- *     <li>Nominal encoder scale used here: 537.7 ticks per output-shaft revolution</li>
- * </ul>
+ * In simple words:
+ * - Encoders tell us how far each wheel moved.
+ * - IMU tells us which direction we are facing.
+ * - This class combines both to estimate X, Y, and heading.
  *
- * <p>Field size is assumed to be 12 ft x 12 ft (144 in x 144 in).</p>
+ * Hardware assumptions used here:
+ * - goBILDA 104 mm mecanum wheels
+ * - goBILDA 5202 19.2:1 motors
+ * - 537.7 encoder ticks per wheel revolution
  *
- * <p>The class uses the drive motor encoders to estimate translation. For heading, the default
- * behavior is to use the IMU because it is more stable for field-oriented driving and for any
- * higher-level navigation code that may sit on top of this class. A pure wheel heading estimate is
- * still tracked and published for comparison/debugging.</p>
+ * Coordinate system used by this file:
+ * - +X = field right (east)
+ * - +Y = field forward (north)
+ * - Heading 0 rad = facing +Y
+ * - Positive heading = counterclockwise turn
  *
- * <p>Coordinate system used by this class:</p>
- * <ul>
- *     <li>X increases to the robot's field-right / east</li>
- *     <li>Y increases forward / north on the field</li>
- *     <li>0 heading means the robot faces +Y on the field</li>
- *     <li>Positive heading is counterclockwise</li>
- * </ul>
+ * =========================
+ * STUDENT QUICKSTART
+ * =========================
+ * Units cheat sheet:
+ * - 1 foot = 12 inches
+ * - 180 degrees = PI radians
+ * - 90 degrees = PI/2 radians
+ * - Convert degrees -> radians: Math.toRadians(deg)
+ * - Convert radians -> degrees: Math.toDegrees(rad)
  *
- * <p>Important note: because the codebase does not currently define your robot's exact chassis
- * track width and wheel base, this class includes reasonable default values and setter methods so
- * you can tune them after measuring the real robot.</p>
+ * Sign convention cheat sheet:
+ * - Field X goes right, field Y goes forward
+ * - Positive heading is counterclockwise
+ * - heading error is usually: target - current
+ * - AngleUnit.normalizeRadians(...) keeps angles in a safe wrapped range
+ *
+ * 10-step flow of what happens each update loop:
+ * 1) Read current encoder ticks from all 4 motors.
+ * 2) Subtract previous ticks to get tick change this loop.
+ * 3) Convert tick changes to inches.
+ * 4) Compute robot-local forward and right movement.
+ * 5) Compute heading change from wheels (encoder heading).
+ * 6) Read heading from IMU and compute IMU heading change.
+ * 7) Pick heading source (IMU or wheel heading) based on settings.
+ * 8) Rotate local movement into field X/Y movement.
+ * 9) Add field movement to pose, clamp to field if enabled.
+ * 10) Compute velocity and save current values for next loop.
  */
 public class MecanumWheelMotorOdometry {
     public static final double FIELD_SIZE_FEET = 12.0;
@@ -118,8 +136,14 @@ public class MecanumWheelMotorOdometry {
     }
 
     /**
-     * Captures the current encoder and heading values without moving the robot.
-     * Call once in init/start after motor directions and IMU are configured.
+     * Prepares odometry memory using current sensor readings.
+     *
+     * Call this once after hardware is configured.
+     *
+     * Outcome:
+     * - Saves current encoder ticks as the "starting point"
+     * - Reads IMU heading as initial heading
+     * - Marks odometry as initialized
      */
     public void initialize() {
         previousFrontLeftTicks = frontLeftDrive.getCurrentPosition();
@@ -137,14 +161,21 @@ public class MecanumWheelMotorOdometry {
     }
 
     /**
-     * Resets the pose estimate to the given field position.
-     * This should normally be called before autonomous/path navigation starts.
+     * Force-sets robot pose to a known field position.
+     *
+     * Parameters:
+     * - xInches: field X position in inches
+     * - yInches: field Y position in inches
+     * - headingRadians: facing direction in radians
+     *
+     * Use this before autonomous starts if you know where robot actually is.
      */
     public void resetPose(double xInches, double yInches, double headingRadians) {
         if (!initialized) {
             initialize();
         }
 
+        // If clamping is on, keep pose inside field boundaries.
         this.xInches = clampPoseToField ? Range.clip(xInches, 0.0, fieldSizeInches) : xInches;
         this.yInches = clampPoseToField ? Range.clip(yInches, 0.0, fieldSizeInches) : yInches;
         this.headingRadians = AngleUnit.normalizeRadians(headingRadians);
@@ -162,14 +193,23 @@ public class MecanumWheelMotorOdometry {
         clearMotionDeltas();
     }
 
-    /** Convenience helper for feet-based setup on a 12 ft x 12 ft field. */
+    /**
+     * Same as resetPose(...), but uses feet/degrees for easier human input.
+     */
     public void resetPoseFeet(double xFeet, double yFeet, double headingDegrees) {
         resetPose(xFeet * 12.0, yFeet * 12.0, Math.toRadians(headingDegrees));
     }
 
     /**
-     * Update odometry from the wheel encoders and IMU.
-     * Call once every loop before reading pose or asking the navigator to drive.
+     * Main odometry update. Call once every control loop.
+     *
+     * What this method reads:
+     * - 4 motor encoder positions
+     * - IMU yaw
+     *
+     * What this method updates:
+     * - xInches, yInches, headingRadians (pose)
+     * - loop deltas and velocities for telemetry/debugging
      */
     public void update() {
         if (!initialized) {
@@ -182,6 +222,7 @@ public class MecanumWheelMotorOdometry {
         int currentBackLeftTicks = backLeftDrive.getCurrentPosition();
         int currentBackRightTicks = backRightDrive.getCurrentPosition();
 
+        // Convert per-wheel tick changes to physical distance in inches.
         frontLeftDeltaInches = ticksToInches(currentFrontLeftTicks - previousFrontLeftTicks);
         frontRightDeltaInches = ticksToInches(currentFrontRightTicks - previousFrontRightTicks);
         backLeftDeltaInches = ticksToInches(currentBackLeftTicks - previousBackLeftTicks);
@@ -192,9 +233,11 @@ public class MecanumWheelMotorOdometry {
         previousBackLeftTicks = currentBackLeftTicks;
         previousBackRightTicks = currentBackRightTicks;
 
+        // Mecanum math: combine wheel deltas into robot-local translation.
         localForwardDeltaInches = (frontLeftDeltaInches + frontRightDeltaInches + backRightDeltaInches + backLeftDeltaInches) / 4.0;
         localRightDeltaInches = (frontLeftDeltaInches - frontRightDeltaInches + backRightDeltaInches - backLeftDeltaInches) / 4.0;
 
+        // Wheel-based heading estimate from left/right wheel disagreement.
         encoderHeadingDeltaRadians = (frontLeftDeltaInches - frontRightDeltaInches - backRightDeltaInches + backLeftDeltaInches)
                 / (4.0 * getEffectiveTurnRadiusInches());
         encoderHeadingRadians = AngleUnit.normalizeRadians(encoderHeadingRadians + encoderHeadingDeltaRadians);
@@ -203,10 +246,13 @@ public class MecanumWheelMotorOdometry {
         imuHeadingDeltaRadians = AngleUnit.normalizeRadians(imuHeadingRadians - previousImuHeadingRadians);
         previousImuHeadingRadians = imuHeadingRadians;
 
+        // Choose heading source. IMU is usually more stable, but wheel heading can be used for testing.
         double currentUsedHeadingRadians = useImuHeading ? imuHeadingRadians : encoderHeadingRadians;
         double headingDeltaRadians = useImuHeading ? imuHeadingDeltaRadians : encoderHeadingDeltaRadians;
+        // Average heading over the small loop interval improves translation rotation accuracy.
         double averageHeadingRadians = AngleUnit.normalizeRadians(previousUsedHeadingRadians + (headingDeltaRadians / 2.0));
 
+        // Rotate robot-local movement into field coordinates.
         fieldXDeltaInches = (localRightDeltaInches * Math.cos(averageHeadingRadians))
                 - (localForwardDeltaInches * Math.sin(averageHeadingRadians));
         fieldYDeltaInches = (localRightDeltaInches * Math.sin(averageHeadingRadians))
@@ -226,6 +272,7 @@ public class MecanumWheelMotorOdometry {
         if (deltaTimeSeconds > 0.0) {
             xVelocityInchesPerSecond = fieldXDeltaInches / deltaTimeSeconds;
             yVelocityInchesPerSecond = fieldYDeltaInches / deltaTimeSeconds;
+            // Normalize angle delta so velocity does not spike at wrap boundaries (+pi/-pi).
             headingVelocityRadiansPerSecond = AngleUnit.normalizeRadians(headingRadians - previousUsedHeadingRadians) / deltaTimeSeconds;
         } else {
             xVelocityInchesPerSecond = 0.0;
@@ -238,18 +285,28 @@ public class MecanumWheelMotorOdometry {
     }
 
     /**
-     * Sets the robot geometry used by the wheel-only heading estimate.
-     * If you measure your robot, update these values for best odometry quality.
+     * Set measured robot geometry used by wheel-heading math.
+     *
+     * Parameters:
+     * - trackWidthInches: left side to right side spacing
+     * - wheelBaseInches: front axle line to back axle line spacing
      */
     public void setRobotGeometry(double trackWidthInches, double wheelBaseInches) {
         this.trackWidthInches = Math.max(1.0, trackWidthInches);
         this.wheelBaseInches = Math.max(1.0, wheelBaseInches);
     }
 
+    /**
+     * Sets square field size in feet, then converts to inches internally.
+     */
     public void setFieldSizeFeet(double fieldSizeFeet) {
         setFieldSizeInches(fieldSizeFeet * 12.0);
     }
 
+    /**
+     * Sets square field size in inches.
+     * If clamp is enabled, current pose is re-clamped to remain valid.
+     */
     public void setFieldSizeInches(double fieldSizeInches) {
         this.fieldSizeInches = Math.max(1.0, fieldSizeInches);
         if (clampPoseToField) {
@@ -258,21 +315,32 @@ public class MecanumWheelMotorOdometry {
         }
     }
 
+    /**
+     * Chooses heading source for final reported heading.
+     * true = IMU heading, false = wheel-only heading.
+     */
     public void setUseImuHeading(boolean useImuHeading) {
         this.useImuHeading = useImuHeading;
     }
 
+    /**
+     * Turns boundary clamping on/off.
+     * When on, X/Y are kept inside field limits.
+     */
     public void setClampPoseToField(boolean clampPoseToField) {
         this.clampPoseToField = clampPoseToField;
     }
 
+    /**
+     * Sets encoder scale. Useful if your motor/encoder setup changes.
+     */
     public void setTicksPerWheelRevolution(double ticksPerWheelRevolution) {
         this.ticksPerWheelRevolution = Math.max(1.0, ticksPerWheelRevolution);
     }
 
     /**
-     * Adds all useful odometry/localization data to telemetry.
-     * Call this if you want the full debug view on the Driver Station.
+     * Prints full odometry debug data to telemetry.
+     * Great for tuning and student learning.
      */
     public void addTelemetry(Telemetry telemetry) {
         telemetry.addLine("=== MECANUM WHEEL ODOMETRY ===");
@@ -304,46 +372,63 @@ public class MecanumWheelMotorOdometry {
         telemetry.addData("Track / wheel base (in)", "%.2f / %.2f", trackWidthInches, wheelBaseInches);
     }
 
+    /**
+     * Returns current pose as an immutable object in inches/radians.
+     */
     public Pose2d getPose() {
         return new Pose2d(xInches, yInches, headingRadians);
     }
 
+    /**
+     * Returns current pose in feet + radians convenience format.
+     */
     public FieldPoseFeet getPoseFeet() {
         return new FieldPoseFeet(xInches / 12.0, yInches / 12.0, headingRadians);
     }
 
+    /** Returns current field X in inches. */
     public double getXInches() {
         return xInches;
     }
 
+    /** Returns current field Y in inches. */
     public double getYInches() {
         return yInches;
     }
 
+    /** Returns current heading in radians. */
     public double getHeadingRadians() {
         return headingRadians;
     }
 
+    /** Returns current heading in degrees. */
     public double getHeadingDegrees() {
         return Math.toDegrees(headingRadians);
     }
 
+    /** Returns IMU heading in degrees (debug/comparison). */
     public double getImuHeadingDegrees() {
         return Math.toDegrees(imuHeadingRadians);
     }
 
+    /** Returns wheel-derived heading in degrees (debug/comparison). */
     public double getEncoderHeadingDegrees() {
         return Math.toDegrees(encoderHeadingRadians);
     }
 
+    /** Returns configured field size in inches. */
     public double getFieldSizeInches() {
         return fieldSizeInches;
     }
 
+    /** Returns whether pose clamping is currently enabled. */
     public boolean isClampPoseToField() {
         return clampPoseToField;
     }
 
+    /**
+     * Returns one-line human-readable pose text, useful in logs.
+     */
     public String getPoseSummary() {
         return String.format(
                 Locale.US,
@@ -354,6 +439,10 @@ public class MecanumWheelMotorOdometry {
         );
     }
 
+    /**
+     * Reads IMU yaw in radians.
+     * If IMU is missing/null, falls back to wheel heading so code still runs.
+     */
     private double readImuHeadingRadians() {
         if (imu == null) {
             return encoderHeadingRadians;
@@ -361,18 +450,31 @@ public class MecanumWheelMotorOdometry {
         return imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
     }
 
+    /** Converts encoder ticks to inches traveled by wheel circumference math. */
     private double ticksToInches(int ticks) {
         return ticks * getInchesPerTick();
     }
 
+    /**
+     * Returns inches moved for one encoder tick.
+     * Formula: wheel circumference / ticks per wheel revolution.
+     */
     private double getInchesPerTick() {
         return WHEEL_CIRCUMFERENCE_INCHES / ticksPerWheelRevolution;
     }
 
+    /**
+     * Approximate turn radius used in wheel-heading equation.
+     * Average of track width and wheel base is a practical simplification.
+     */
     private double getEffectiveTurnRadiusInches() {
         return (trackWidthInches + wheelBaseInches) / 2.0;
     }
 
+    /**
+     * Clears all per-loop delta and velocity values to zero.
+     * Used after pose reset so old movement does not leak into telemetry.
+     */
     private void clearMotionDeltas() {
         frontLeftDeltaInches = 0.0;
         frontRightDeltaInches = 0.0;
@@ -389,41 +491,60 @@ public class MecanumWheelMotorOdometry {
         headingVelocityRadiansPerSecond = 0.0;
     }
 
+    /**
+     * Immutable pose package in inches/radians.
+     * Useful when you want a snapshot that cannot be changed by callers.
+     */
     public static class Pose2d {
         public final double xInches;
         public final double yInches;
         public final double headingRadians;
 
+        /**
+         * Creates a pose record.
+         * headingRadians is normalized so angle stays in a standard range.
+         */
         public Pose2d(double xInches, double yInches, double headingRadians) {
             this.xInches = xInches;
             this.yInches = yInches;
             this.headingRadians = AngleUnit.normalizeRadians(headingRadians);
         }
 
+        /** Returns X in feet for easier reading. */
         public double getXFeet() {
             return xInches / 12.0;
         }
 
+        /** Returns Y in feet for easier reading. */
         public double getYFeet() {
             return yInches / 12.0;
         }
 
+        /** Returns heading in degrees for easier reading. */
         public double getHeadingDegrees() {
             return Math.toDegrees(headingRadians);
         }
     }
 
+    /**
+     * Immutable pose package where X/Y are already in feet.
+     */
     public static class FieldPoseFeet {
         public final double xFeet;
         public final double yFeet;
         public final double headingRadians;
 
+        /**
+         * Creates a feet-based pose record.
+         * headingRadians is normalized for consistency.
+         */
         public FieldPoseFeet(double xFeet, double yFeet, double headingRadians) {
             this.xFeet = xFeet;
             this.yFeet = yFeet;
             this.headingRadians = AngleUnit.normalizeRadians(headingRadians);
         }
 
+        /** Returns heading in degrees for easy display. */
         public double getHeadingDegrees() {
             return Math.toDegrees(headingRadians);
         }
