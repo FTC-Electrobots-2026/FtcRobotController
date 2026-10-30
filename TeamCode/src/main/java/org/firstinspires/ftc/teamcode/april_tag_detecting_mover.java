@@ -6,7 +6,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.IMU;
-import org.firstinspires.ftc.teamcode.navigate.snap_Mecanum_mover;
+import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 
 import org.firstinspires.ftc.teamcode.navigate.AprilTagWebcam;
@@ -15,7 +15,7 @@ import org.firstinspires.ftc.teamcode.drivesupport.Robot_Placement;
  * Big picture of this OpMode:
  * - It lets a driver control a mecanum robot.
  * - If the second driver holds right bumper, the robot tries to line up ("snap") to an AprilTag.
- * - It uses camera data (AprilTagWebcam) + drive math helper (snap_Mecanum_mover).
+ * - It uses camera data (AprilTagWebcam) + drive math helper (SnapMecanumMover).
  *
  * Where names come from:
  * - Motor names like "front_left_drive" must match exactly in the Robot Configuration on the phone.
@@ -34,7 +34,7 @@ public class april_tag_detecting_mover extends OpMode {
     IMU imu;
 
     // Helper that converts joystick inputs into motor powers.
-    private snap_Mecanum_mover snapMecanumMover;
+    private SnapMecanumMover snapMecanumMover;
     // Helper that detects AprilTags and stores values like x offset and confidence/percent.
     private AprilTagWebcam aprilTagWebcam;
 
@@ -120,7 +120,7 @@ public class april_tag_detecting_mover extends OpMode {
         imu.initialize(new IMU.Parameters(orientationOnRobot)); // Apply mounting info to IMU.
 
         // Build driving helper with all 4 motors + imu.
-        snapMecanumMover = new snap_Mecanum_mover(
+        snapMecanumMover = new SnapMecanumMover(
                 frontLeftDrive,
                 frontRightDrive,
                 backLeftDrive,
@@ -134,7 +134,7 @@ public class april_tag_detecting_mover extends OpMode {
 
         // Start camera/AprilTag system and pass in which tag we want to track.
         aprilTagWebcam = new AprilTagWebcam();
-        aprilTagWebcam.init(hardwareMap, telemetry, robotPlacement.target_tag);
+        aprilTagWebcam.init(hardwareMap, telemetry, robotPlacement.target_tag_1, robotPlacement.target_tag_2);
     }
 
     /*

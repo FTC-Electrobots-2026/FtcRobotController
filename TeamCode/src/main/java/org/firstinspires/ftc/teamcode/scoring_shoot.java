@@ -41,13 +41,17 @@ public class scoring_shoot extends OpMode {
      */
 
     // Configurable constants
-    private static final double INTAKE_HALF_POWER = 1;
-    private static final double WINDMILL_HALF_POWER = 1;
-    private static final double SHOOTER_TARGET_RPM = 5600.0;
+    private static final double INTAKE_POWER = 1;
+    private static final double WINDMILL_POWER = 0.75;
+    private static final double SHOOTER_BASELINE_RPM = 5100.0;
+    private static final double SHOOTER_STEP_RPM = 100.0;
+    private static final double SHOOTER_MIN_RPM = 0.0;
     private static final double SHOOTER_TICKS_PER_REV = 28.0; // 5203 at 1:1 output ratio
-    private static final double SHOOTER_MAX_RPM = 6000.0;
+    private static final double SHOOTER_MAX_RPM = 5600.0;
     private static final double SHOOTER_RPM_TOLERANCE = 100.0;
     private static final double TRIGGER_THRESHOLD = 0.1;
+
+
 
     /*
      * CONTROL MATH (LAYERED EXPLANATION)
@@ -84,6 +88,11 @@ public class scoring_shoot extends OpMode {
     private double shooterIntegral;
     private double shooterLastError;
     private long shooterLastTimeMs;
+    private double shooterTargetRpm;
+    private double shooterMaxSeenRpm;
+    private boolean prevDpadUp;
+    private boolean prevDpadDown;
+    private boolean prevLeftBumper;
 
     /**
      * Called once when you press INIT.
@@ -114,10 +123,15 @@ public class scoring_shoot extends OpMode {
 
         stopFeedAndWindmill();
         resetShooterPid();
+        shooterTargetRpm = SHOOTER_BASELINE_RPM;
+        shooterMaxSeenRpm = 0.0;
+        prevDpadUp = false;
+        prevDpadDown = false;
+        prevLeftBumper = false;
 
         telemetry.addData("Status", "Initialized");
-        telemetry.addData("Controls", "Gamepad2: LT intake, RT shooter, A+RT windmill");
-        telemetry.addData("Shooter Target RPM", SHOOTER_TARGET_RPM);
+        telemetry.addData("Controls", "Gamepad2: LT intake, RT shooter, A+RT windmill, Dpad Up/Down target, LB reset");
+        telemetry.addData("Shooter Target RPM", shooterTargetRpm);
         telemetry.update();
     }
 
@@ -137,28 +151,32 @@ public class scoring_shoot extends OpMode {
      */
     @Override
     public void loop() {
+        updateShooterTargetRpmFromDpad();
+
         boolean intakeRequested = gamepad2.left_trigger > TRIGGER_THRESHOLD;
         boolean shooterRequested = gamepad2.right_trigger > TRIGGER_THRESHOLD;
         // Windmill only runs while BOTH shooter trigger and A are held.
         // This avoids accidental windmill movement when shooter is off.
         boolean windmillRequested = shooterRequested && gamepad2.a;
+        double intakeMotorPower;
 
         if (intakeRequested) {
             // Left feeder CW, right feeder CCW, intake motor CW.
-            frontLeftFeeder.setPower(INTAKE_HALF_POWER);
-            frontRightFeeder.setPower(-INTAKE_HALF_POWER);
-            frontIntakeMotor.setPower(INTAKE_HALF_POWER);
+            frontLeftFeeder.setPower(INTAKE_POWER);
+            frontRightFeeder.setPower(-INTAKE_POWER);
+            intakeMotorPower = INTAKE_POWER;
         } else {
             frontLeftFeeder.setPower(0.0);
             frontRightFeeder.setPower(0.0);
-            frontIntakeMotor.setPower(0.0);
+            intakeMotorPower = 0.0;
         }
 
         double shooterPower = 0.0;
         double shooterRpm = getShooterRpm();
+        shooterMaxSeenRpm = Math.max(shooterMaxSeenRpm, shooterRpm);
         if (shooterRequested) {
             // Closed-loop control: compute needed power based on current error.
-            shooterPower = computeShooterPidPower(SHOOTER_TARGET_RPM, shooterRpm);
+            shooterPower = computeShooterPidPower(shooterTargetRpm, shooterRpm);
             shooterMotor.setPower(shooterPower);
         } else {
             shooterMotor.setPower(0.0);
@@ -168,16 +186,26 @@ public class scoring_shoot extends OpMode {
 
         if (windmillRequested) {
             // Counterclockwise windmill at half speed while RT and A are both held.
-            windmillServo.setPower(-WINDMILL_HALF_POWER);
+            windmillServo.setPower(-WINDMILL_POWER);
+            // Intake assist: keep at least 50% intake power to help clear jams while feeding.
+            intakeMotorPower = Math.max(intakeMotorPower, 0.5);
         } else {
             windmillServo.setPower(0.0);
         }
 
-        boolean atTargetRpm = Math.abs(SHOOTER_TARGET_RPM - shooterRpm) <= SHOOTER_RPM_TOLERANCE;
+        frontIntakeMotor.setPower(intakeMotorPower);
+
+        boolean atTargetRpmRange = Math.abs(shooterTargetRpm - shooterRpm) <= SHOOTER_RPM_TOLERANCE;
+        double rpmError = shooterTargetRpm - shooterRpm;
+        boolean shooterPowerSaturated = shooterRequested && Math.abs(shooterPower) >= 0.999;
         telemetry.addData("Shooter RPM", "%.1f", shooterRpm);
-        telemetry.addData("Shooter Target RPM", "%.1f", SHOOTER_TARGET_RPM);
+        telemetry.addData("Shooter Target RPM", "%.1f", shooterTargetRpm);
+        telemetry.addData("Shooter Baseline RPM", "%.1f", SHOOTER_BASELINE_RPM);
         telemetry.addData("Shooter Power", "%.3f", shooterPower);
-        telemetry.addData("Shooter Ready", atTargetRpm ? "YES" : "NO");
+        telemetry.addData("Shooter Power Saturated", shooterPowerSaturated ? "YES" : "NO");
+        telemetry.addData("Shooter RPM Error", "%.1f", rpmError);
+        telemetry.addData("Shooter Estimated Max Seen RPM", "%.1f", shooterMaxSeenRpm);
+        telemetry.addData("Shooter Ready", atTargetRpmRange ? "YES" : "NO");
         telemetry.addData("Intake Active", intakeRequested);
         telemetry.addData("Windmill Active", windmillRequested);
         telemetry.update();
@@ -292,6 +320,58 @@ public class scoring_shoot extends OpMode {
         shooterIntegral = 0.0;
         shooterLastError = 0.0;
         shooterLastTimeMs = 0;
+    }
+
+    /**
+     * Updates the persistent shooter target RPM from gamepad2 button presses.
+     *
+     * What this control does:
+     * - Lets drivers "trim" shooter speed in fixed 100 RPM steps during a match.
+     * - Keeps the new target even if shooter trigger is released and pressed again.
+     * - Provides a quick reset (left bumper) back to baseline tuning.
+     *
+     * Button behavior:
+     * - D-pad up    -> target += 100 RPM, capped at SHOOTER_MAX_RPM.
+     * - D-pad down  -> target -= 100 RPM, floored at SHOOTER_MIN_RPM.
+     * - Left bumper -> target = SHOOTER_BASELINE_RPM and clears max-seen RPM telemetry.
+     *
+     * Why rising-edge detection is used:
+     * - FTC loop() runs many times per second.
+     * - Without edge detection, holding a D-pad direction would apply many increments per second.
+     * - By comparing current button state with previous state, each physical press changes exactly once.
+     *
+     * Why PID is reset after target changes:
+     * - Integral and derivative history are tied to the previous target.
+     * - Clearing PID memory avoids a stale correction "kick" when target steps up/down.
+     */
+    private void updateShooterTargetRpmFromDpad() {
+        boolean dpadUp = gamepad2.dpad_up;
+        boolean dpadDown = gamepad2.dpad_down;
+        boolean leftBumper = gamepad2.left_bumper;
+
+        // Rising edge: false -> true means a new press event.
+        if (dpadUp && !prevDpadUp) {
+            shooterTargetRpm = Math.min(SHOOTER_MAX_RPM, shooterTargetRpm + SHOOTER_STEP_RPM);
+            resetShooterPid();
+        }
+
+        // Rising edge: false -> true means a new press event.
+        if (dpadDown && !prevDpadDown) {
+            shooterTargetRpm = Math.max(SHOOTER_MIN_RPM, shooterTargetRpm - SHOOTER_STEP_RPM);
+            resetShooterPid();
+        }
+
+        // Rising edge reset back to baseline tune.
+        if (leftBumper && !prevLeftBumper) {
+            shooterTargetRpm = SHOOTER_BASELINE_RPM;
+            shooterMaxSeenRpm = 0.0;
+            resetShooterPid();
+        }
+
+        // Save current states for edge detection in the next loop cycle.
+        prevDpadUp = dpadUp;
+        prevDpadDown = dpadDown;
+        prevLeftBumper = leftBumper;
     }
 
     /**

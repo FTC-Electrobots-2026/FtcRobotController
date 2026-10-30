@@ -20,6 +20,9 @@ import java.util.Locale;
 
 public class AprilTagWebcam {
 
+    // A cluster is considered "right-side up" (scorable) only when |roll| is below this value.
+    private static final double SCORABLE_ROLL_ABS_MAX_DEG = 90.0;
+
     private  AprilTagProcessor aprilTagProcessor;
     private VisionPortal visionPortal;
     private final List<AprilTagDetection> detectedTags = new ArrayList<>();
@@ -30,9 +33,78 @@ public class AprilTagWebcam {
 
     public boolean tagDetected = false;
 
-    private String target_tag;
-
+    private String target_tag_1;
+    private String target_tag_2;
     private Telemetry telemetry;
+
+    /**
+     * Immutable snapshot of cluster telemetry used by snap-to-tag driver feedback.
+     *
+     * This keeps detection parsing inside AprilTagWebcam so callers can just render values.
+     */
+    public static class SnapTelemetry {
+        public final int visibleTagCount;
+        public final boolean hasCluster;
+        public final String clusterName;
+        public final double percentClusterFound;
+        public final double xInches;
+        public final double yInches;
+        public final double zInches;
+        public final double pitchDegrees;
+        public final double rollDegrees;
+        public final double yawDegrees;
+        public final double rangeInches;
+        public final double bearingDegrees;
+        public final double elevationDegrees;
+
+        private SnapTelemetry(
+                int visibleTagCount,
+                boolean hasCluster,
+                String clusterName,
+                double percentClusterFound,
+                double xInches,
+                double yInches,
+                double zInches,
+                double pitchDegrees,
+                double rollDegrees,
+                double yawDegrees,
+                double rangeInches,
+                double bearingDegrees,
+                double elevationDegrees
+        ) {
+            this.visibleTagCount = visibleTagCount;
+            this.hasCluster = hasCluster;
+            this.clusterName = clusterName;
+            this.percentClusterFound = percentClusterFound;
+            this.xInches = xInches;
+            this.yInches = yInches;
+            this.zInches = zInches;
+            this.pitchDegrees = pitchDegrees;
+            this.rollDegrees = rollDegrees;
+            this.yawDegrees = yawDegrees;
+            this.rangeInches = rangeInches;
+            this.bearingDegrees = bearingDegrees;
+            this.elevationDegrees = elevationDegrees;
+        }
+
+        public static SnapTelemetry noCluster(int visibleTagCount) {
+            return new SnapTelemetry(
+                    visibleTagCount,
+                    false,
+                    "NONE",
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+            );
+        }
+    }
 
     /**
      * Refreshes AprilTag detections from the camera for this loop.
@@ -50,10 +122,12 @@ public class AprilTagWebcam {
      * - If target tag name was configured: returns true only when that specific tag is seen.
      */
     public boolean updateDetections(){
-        x_value = 0; // Reset every loop so old X values are not reused when no tag is seen.
+        x_value = 0; // Reset every loop so old values are not reused when no qualifying tag is seen.
+        y_value = 0;
+        percent_value = 0;
         List<AprilTagDetection> newDetections = aprilTagProcessor.getDetections();
         boolean hasDetections = !newDetections.isEmpty();
-        boolean preferred_detected = false;
+        boolean filteredDetectionFound = false;
 
         detectedTags.clear(); // Replace old frame detections with current frame detections.
         detectedTags.addAll(newDetections);
@@ -62,17 +136,15 @@ public class AprilTagWebcam {
         telemetry.addData("AprilTag found", hasDetections ? "Y" : "N");
         tagDetected = hasDetections;
         if (hasDetections) {
-            preferred_detected = renderDetections();
+            filteredDetectionFound = renderDetections();
         }
         telemetry.update();
-        if (target_tag == null || target_tag.isEmpty()) {
-            // No preferred tag chosen, so "any detection" counts as success.
-            return hasDetections;
-        }
-        else{
-            // Preferred tag chosen, so only return true if that one was found.
-            return preferred_detected;
-        }
+
+        // Return true only when at least one detection passed the active filters.
+        // Active filters are:
+        // 1) Target tag name (if configured), and
+        // 2) Scorable orientation (|roll| < 90 deg).
+        return hasDetections && filteredDetectionFound;
 
     }
 
@@ -88,7 +160,7 @@ public class AprilTagWebcam {
      * Outcome:
      * - Vision system starts and this class is ready for `updateDetections()` calls.
      */
-    public void init(HardwareMap hwMap, Telemetry telemetry, String target_tag ){
+    public void init(HardwareMap hwMap, Telemetry telemetry, String target_tag_1, String target_tag_2){
         this.telemetry = telemetry;
         tagDetected = false;
         aprilTagProcessor = new AprilTagProcessor.Builder()
@@ -104,7 +176,8 @@ public class AprilTagWebcam {
         vpBuilder.setCameraResolution(new Size(640, 480));
         vpBuilder.addProcessor(aprilTagProcessor);
         visionPortal = vpBuilder.build();
-        this.target_tag = target_tag;
+        this.target_tag_1 = target_tag_1;
+        this.target_tag_2 = target_tag_2;
 
     }
 
@@ -134,7 +207,8 @@ public class AprilTagWebcam {
         vpBuilder.setCameraResolution(new Size(640, 480));
         vpBuilder.addProcessor(aprilTagProcessor);
         visionPortal = vpBuilder.build();
-        this.target_tag = "";
+        this.target_tag_1 = "";
+        this.target_tag_2 = "";
 
     }
 
@@ -165,57 +239,190 @@ public class AprilTagWebcam {
     }
 
     /**
-     * Writes detailed telemetry for each detection and updates helper values
-     * (`x_value`, `y_value`, `percent_value`).
+     * Returns a cluster-focused telemetry snapshot for snap-to-tag UI.
+     *
+     * Selection rule:
+     * - First cluster detection in the latest frame is used.
+     * - If no cluster is present, a no-cluster snapshot is returned.
+     */
+    public SnapTelemetry getSnapTelemetry() {
+        int visibleTagCount = detectedTags.size();
+
+        for (AprilTagDetection detection : detectedTags) {
+            if (detection instanceof AprilTagClusterDetection) {
+                AprilTagClusterDetection clusterDetection = (AprilTagClusterDetection) detection;
+                String clusterName = (clusterDetection.metadata != null)
+                        ? clusterDetection.metadata.name
+                        : "Unknown";
+
+                if (detection.ftcPose == null) {
+                    return new SnapTelemetry(
+                            visibleTagCount,
+                            true,
+                            clusterName,
+                            clusterDetection.percentClusterFound,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0
+                    );
+                }
+
+                return new SnapTelemetry(
+                        visibleTagCount,
+                        true,
+                        clusterName,
+                        clusterDetection.percentClusterFound,
+                        detection.ftcPose.x,
+                        detection.ftcPose.y,
+                        detection.ftcPose.z,
+                        detection.ftcPose.pitch,
+                        detection.ftcPose.roll,
+                        detection.ftcPose.yaw,
+                        detection.ftcPose.range,
+                        detection.ftcPose.bearing,
+                        detection.ftcPose.elevation
+                );
+            }
+        }
+
+        return SnapTelemetry.noCluster(visibleTagCount);
+    }
+
+    /**
+     * Writes detailed telemetry for each detection and applies two-stage filtering:
+     *
+     * Stage 1: target name filter (optional)
+     * - If target tags are configured, only matching names can pass.
+     * - If no target tags are configured, all names are allowed.
+     *
+     * Stage 2: scorable orientation filter (required)
+     * - A detection is scorable only when |ftcPose.roll| < 90 degrees.
+     * - This approximates "right-side up" cells from robot camera perspective.
+     *
+     * Side effects:
+     * - Updates `x_value`, `y_value`, and `percent_value` from the most recent
+     *   detection that passes active filters.
      *
      * Returns:
-     * - true if the preferred/target tag name is found in current detections.
+     * - true when at least one detection passes active filters.
      */
     private boolean renderDetections() {
-        boolean preferred_detected = false;
+        boolean filteredDetectionFound = false;
+        boolean targetFilterConfigured = hasTargetFilterConfigured();
+
         for (AprilTagDetection detection : detectedTags) {
             if (detection instanceof AprilTagSingleDetection) {
                 AprilTagSingleDetection singleDet = (AprilTagSingleDetection) detection;
+                boolean scorable = isScorableByRoll(detection);
+                boolean targetMatch = singleDet.metadata != null && isTargetTagName(singleDet.metadata.name);
+                boolean passesFilter = scorable && (!targetFilterConfigured || targetMatch);
 
                 if (singleDet.metadata != null) {
                     telemetry.addData("ID", singleDet.id);
-                    if (singleDet.metadata.name.equals(target_tag)) {
+                    if (targetMatch) {
                         telemetry.addData("Target Tag Found", "Y");
-                        preferred_detected = true;
                     } else {
                         telemetry.addData("Target Tag Found", "N");
                     }
+                    telemetry.addData("Scorable Cell", scorable ? "Y" : "N");
                     telemetry.addLine(String.format(Locale.US, "\n==== (ID %d) %s", singleDet.id, singleDet.metadata.name));
                     telemetry.addLine(String.format(Locale.US, "XYZ %6.1f %6.1f %6.1f  (inch)", detection.ftcPose.x, detection.ftcPose.y, detection.ftcPose.z));
                     telemetry.addLine(String.format(Locale.US, "PRY %6.1f %6.1f %6.1f  (deg)", detection.ftcPose.pitch, detection.ftcPose.roll, detection.ftcPose.yaw));
                     telemetry.addLine(String.format(Locale.US, "RBE %6.1f %6.1f %6.1f  (inch, deg, deg)", detection.ftcPose.range, detection.ftcPose.bearing, detection.ftcPose.elevation));
-                    x_value = detection.ftcPose.x; // Horizontal offset used by snap logic in other class.
                 } else {
                     telemetry.addData("ID", singleDet.id);
+                    telemetry.addData("Target Tag Found", "N");
+                    telemetry.addData("Scorable Cell", scorable ? "Y" : "N");
                     telemetry.addLine(String.format(Locale.US, "\n==== (ID %d) Unknown", singleDet.id));
                     telemetry.addLine(String.format(Locale.US, "Center %6.0f %6.0f   (pixels)", singleDet.center.x, singleDet.center.y));
                 }
+
+                if (passesFilter) {
+                    filteredDetectionFound = true;
+                    x_value = detection.ftcPose.x;
+                    y_value = detection.ftcPose.y;
+                }
             } else {
                 AprilTagClusterDetection clusterDet = (AprilTagClusterDetection) detection;
-                x_value = detection.ftcPose.x;
+                boolean scorable = isScorableByRoll(detection);
+                String clusterName = (clusterDet.metadata != null) ? clusterDet.metadata.name : "Unknown";
+                boolean targetMatch = isTargetTagName(clusterName);
+                boolean passesFilter = scorable && (!targetFilterConfigured || targetMatch);
+
                 telemetry.addData("ID", "N/A (cluster)");
-                telemetry.addLine(String.format("\n==== Tag Cluster (%s)", clusterDet.metadata.name));
-                if (clusterDet.metadata.name.equals(target_tag)) {
+                telemetry.addLine(String.format("\n==== Tag Cluster (%s)", clusterName));
+                if (targetMatch) {
                     telemetry.addData("Target Tag Found", "Y");
-                    preferred_detected = true;
                 } else {
                     telemetry.addData("Target Tag Found", "N");
                 }
-                x_value = detection.ftcPose.x;
-                y_value = detection.ftcPose.y;
-                percent_value = clusterDet.percentClusterFound; // How much of the cluster was found (0-100 style signal).
+                telemetry.addData("Scorable Cell", scorable ? "Y" : "N");
                 telemetry.addLine(String.format(Locale.US, "Percent tags found: %d", clusterDet.percentClusterFound));
                 telemetry.addLine(String.format(Locale.US, "XYZ %6.1f %6.1f %6.1f  (inch)", detection.ftcPose.x, detection.ftcPose.y, detection.ftcPose.z));
                 telemetry.addLine(String.format(Locale.US, "PRY %6.1f %6.1f %6.1f  (deg)", detection.ftcPose.pitch, detection.ftcPose.roll, detection.ftcPose.yaw));
                 telemetry.addLine(String.format(Locale.US, "RBE %6.1f %6.1f %6.1f  (inch, deg, deg)", detection.ftcPose.range, detection.ftcPose.bearing, detection.ftcPose.elevation));
+
+                if (passesFilter) {
+                    filteredDetectionFound = true;
+                    x_value = detection.ftcPose.x;
+                    y_value = detection.ftcPose.y;
+                    percent_value = clusterDet.percentClusterFound;
+                }
             }
         }
-        return preferred_detected;
+        return filteredDetectionFound;
+    }
+
+    /**
+     * Returns true if at least one target tag name was configured.
+     *
+     * Why this exists:
+     * - The class supports two modes:
+     *   1) Targeted mode: only specific tag names are allowed.
+     *   2) Open mode: any tag name is allowed.
+     * - This helper makes that decision explicit and easy to read.
+     */
+    private boolean hasTargetFilterConfigured() {
+        return (target_tag_1 != null && !target_tag_1.isEmpty())
+                || (target_tag_2 != null && !target_tag_2.isEmpty());
+    }
+
+    /**
+     * Returns true when the provided tag name matches one of the configured targets.
+     *
+     * Notes:
+     * - Returns false for null names.
+     * - If no target filter is configured, caller should bypass this check by using
+     *   `hasTargetFilterConfigured()`.
+     */
+    private boolean isTargetTagName(String name) {
+        if (name == null) {
+            return false;
+        }
+        return name.equals(target_tag_1) || name.equals(target_tag_2);
+    }
+
+    /**
+     * Returns true if detection orientation indicates a scorable cell.
+     *
+     * Rule used:
+     * - Scorable when absolute roll is less than 90 degrees.
+     * - Not scorable when roll is outside that range.
+     *
+     * Safety:
+     * - If pose data is missing, return false so we do not score uncertain detections.
+     */
+    private boolean isScorableByRoll(AprilTagDetection detection) {
+        if (detection == null || detection.ftcPose == null) {
+            return false;
+        }
+        return Math.abs(detection.ftcPose.roll) < SCORABLE_ROLL_ABS_MAX_DEG;
     }
 
     /**

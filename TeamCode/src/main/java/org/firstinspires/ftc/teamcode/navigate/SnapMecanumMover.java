@@ -78,7 +78,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
  * - SNAP_TURN_MAX_COMMAND_SLEW_PER_SECOND: smoothness of acceleration/deceleration; lower = smoother, higher = snappier.
  * - TURN_STOP_DEADBAND_RADIANS: final stop tolerance; larger stops earlier, smaller aims more precisely.
  */
-public class snap_Mecanum_mover {
+public class SnapMecanumMover {
     // Predefined snap headings for the trigger shortcuts.
     // In this codebase, 0 radians means field north.
     private static final double RIGHT_TRIGGER_TARGET_RADIANS = -Math.PI / 2.0;
@@ -182,7 +182,7 @@ public class snap_Mecanum_mover {
      * Outcome:
      * - This class can now read heading and command wheel powers.
      */
-    public snap_Mecanum_mover(
+    public SnapMecanumMover(
             DcMotor frontLeftDrive,
             DcMotor frontRightDrive,
             DcMotor backLeftDrive,
@@ -231,12 +231,32 @@ public class snap_Mecanum_mover {
             return;
         }
 
+        applyYawResetAndSnapCancelIfRequested(gamepad1);
+        processSnapTurnTriggerEdges(gamepad1);
+        double rotateCommand = resolveRotateCommand(gamepad1, telemetry);
+
+        //telemetry.addData("Heading (deg)", Math.toDegrees(getCurrentHeadingRadians()));
+        //telemetry.addData("Snap turn", snapTurnActive ? "ACTIVE" : "OFF");
+        /*
+        if (snapTurnActive) {
+            telemetry.addData("Target heading (deg)", Math.toDegrees(targetHeadingRadians));
+            telemetry.addData("Heading error (deg)", Math.toDegrees(AngleUnit.normalizeRadians(targetHeadingRadians - getCurrentHeadingRadians())));
+            telemetry.addData("Turn rate (deg/s)", Math.toDegrees(lastTurnRateRadiansPerSecond));
+            telemetry.addData("Settling", snapTurnSettling ? "YES" : "NO");
+        }
+        */
+        driveFromSelectedMode(gamepad1, rotateCommand);
+    }
+
+    private void applyYawResetAndSnapCancelIfRequested(Gamepad gamepad1) {
         // Resetting yaw redefines the robot's current facing direction as zero.
         if (gamepad1.a) {
             imu.resetYaw();
             snapTurnActive = false;
         }
+    }
 
+    private void processSnapTurnTriggerEdges(Gamepad gamepad1) {
         boolean leftTriggerPressed = gamepad1.left_trigger > TRIGGER_THRESHOLD;
         boolean rightTriggerPressed = gamepad1.right_trigger > TRIGGER_THRESHOLD;
 
@@ -251,7 +271,9 @@ public class snap_Mecanum_mover {
 
         leftTriggerWasPressed = leftTriggerPressed;
         rightTriggerWasPressed = rightTriggerPressed;
+    }
 
+    private double resolveRotateCommand(Gamepad gamepad1, Telemetry telemetry) {
         // Snap reaction rule:
         // Manual turn input overrides snap-turn immediately.
         // This makes driver control feel predictable and safe.
@@ -263,16 +285,10 @@ public class snap_Mecanum_mover {
             rotateCommand = -getSnapTurnCommand(telemetry);
         }
 
-        //telemetry.addData("Heading (deg)", Math.toDegrees(getCurrentHeadingRadians()));
-        //telemetry.addData("Snap turn", snapTurnActive ? "ACTIVE" : "OFF");
-        /*
-        if (snapTurnActive) {
-            telemetry.addData("Target heading (deg)", Math.toDegrees(targetHeadingRadians));
-            telemetry.addData("Heading error (deg)", Math.toDegrees(AngleUnit.normalizeRadians(targetHeadingRadians - getCurrentHeadingRadians())));
-            telemetry.addData("Turn rate (deg/s)", Math.toDegrees(lastTurnRateRadiansPerSecond));
-            telemetry.addData("Settling", snapTurnSettling ? "YES" : "NO");
-        }
-        */
+        return rotateCommand;
+    }
+
+    private void driveFromSelectedMode(Gamepad gamepad1, double rotateCommand) {
         if (gamepad1.left_bumper) {
             // Robot-relative mode: stick directions are interpreted from the robot's point of view.
             drive(-gamepad1.left_stick_y, gamepad1.left_stick_x, rotateCommand);
@@ -363,15 +379,7 @@ public class snap_Mecanum_mover {
 
         // Once the heading is close enough, stop the snap-turn controller entirely.
         if (Math.abs(headingError) <= TURN_STOP_DEADBAND_RADIANS) {
-            snapTurnActive = false;
-            snapTurnSettling = false;
-            settledLoopCount = 0;
-            previousHeadingErrorRadians = headingError;
-            previousSnapUpdateTimeNanos = nowNanos;
-            lastTurnRateRadiansPerSecond = 0.0;
-            filteredHeadingErrorRateRadiansPerSecond = 0.0;
-            previousRotateCommand = 0.0;
-            return 0.0;
+            return stopSnapTurnAndReturnZero(headingError, nowNanos);
         }
 
         boolean overshotTarget = Math.signum(previousHeadingErrorRadians) != Math.signum(headingError)
@@ -396,15 +404,7 @@ public class snap_Mecanum_mover {
         // Require several consecutive settled loops before considering the robot stable.
         if (settledLoopCount >= REQUIRED_SETTLED_LOOPS
                 && Math.abs(headingError) <= TURN_STOP_DEADBAND_RADIANS) {
-            snapTurnActive = false;
-            snapTurnSettling = false;
-            settledLoopCount = 0;
-            previousHeadingErrorRadians = headingError;
-            previousSnapUpdateTimeNanos = nowNanos;
-            lastTurnRateRadiansPerSecond = 0.0;
-            filteredHeadingErrorRateRadiansPerSecond = 0.0;
-            previousRotateCommand = 0.0;
-            return 0.0;
+            return stopSnapTurnAndReturnZero(headingError, nowNanos);
         }
 
         // PD baseline command before shaping.
@@ -454,6 +454,18 @@ public class snap_Mecanum_mover {
         previousSnapUpdateTimeNanos = nowNanos;
 
         return rotateCommand;
+    }
+
+    private double stopSnapTurnAndReturnZero(double headingError, long nowNanos) {
+        snapTurnActive = false;
+        snapTurnSettling = false;
+        settledLoopCount = 0;
+        previousHeadingErrorRadians = headingError;
+        previousSnapUpdateTimeNanos = nowNanos;
+        lastTurnRateRadiansPerSecond = 0.0;
+        filteredHeadingErrorRateRadiansPerSecond = 0.0;
+        previousRotateCommand = 0.0;
+        return 0.0;
     }
 
     /**
@@ -817,3 +829,4 @@ public class snap_Mecanum_mover {
         }
     }
 }
+
