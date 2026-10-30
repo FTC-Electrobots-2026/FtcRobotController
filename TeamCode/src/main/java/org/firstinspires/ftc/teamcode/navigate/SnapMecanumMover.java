@@ -623,21 +623,65 @@ public class SnapMecanumMover {
         activeOdometry.update();
 
         // No target means there is nothing to do; stop cleanly and report success.
-        if (targetPose == null) {
-            stopTargetNavigation();
-            targetNavigationActive = false;
+        if (stopIfTargetMissing()) {
             return true;
         }
 
         updateTargetErrors(activeOdometry);
 
         // If we are already close enough in both position and heading, stop driving.
+        if (stopIfAlreadyAtTarget()) {
+            return true;
+        }
+
+        NavigationCommand translationOnlyCommand = computeTargetTranslationCommand(activeOdometry);
+        double forwardCommand = translationOnlyCommand.forward;
+        double rightCommand = translationOnlyCommand.right;
+
+        long nowNanos = System.nanoTime();
+        double deltaTimeSeconds = computeTargetNavigationDeltaTimeSeconds(nowNanos);
+        double rotateCommand = computeTargetRotationCommand(deltaTimeSeconds);
+
+        // Slow down near the point so final approach and heading settle are smoother.
+        if (targetDistanceInches <= Math.max(targetPositionToleranceInches * 2.0, 3.0)) {
+            forwardCommand *= 0.4;
+            rightCommand *= 0.4;
+        }
+
+        // Reuse the existing field-relative drive implementation instead of commanding wheels here.
+        driveFieldRelative(forwardCommand, rightCommand, rotateCommand);
+        lastTargetNavigationCommand = new NavigationCommand(forwardCommand, rightCommand, rotateCommand);
+        previousTargetHeadingErrorRadians = targetHeadingErrorRadians;
+        previousTargetNavigationUpdateTimeNanos = nowNanos;
+        targetNavigationActive = true;
+
+        // Target navigation and trigger-based snap-turn are both heading controllers, so disable the
+        // trigger-based one while autonomous target motion is active.
+        snapTurnActive = false;
+        return false;
+    }
+
+    private boolean stopIfTargetMissing() {
+        if (targetPose == null) {
+            stopTargetNavigation();
+            targetNavigationActive = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean stopIfAlreadyAtTarget() {
         if (isAtTarget()) {
             stopTargetNavigation();
             targetNavigationActive = false;
             return true;
         }
 
+        return false;
+    }
+
+    private NavigationCommand computeTargetTranslationCommand(MecanumWheelMotorOdometry activeOdometry) {
         // Proportional position controller:
         // bigger position error -> bigger movement command.
         double rightCommand = (targetPose.xInches - activeOdometry.getXInches()) * targetTranslationKp;
@@ -672,12 +716,19 @@ public class SnapMecanumMover {
             // When facing far away from goal heading, reduce translation to keep path controlled.
         }
 
-        long nowNanos = System.nanoTime();
+        return new NavigationCommand(forwardCommand, rightCommand, 0.0);
+    }
+
+    private double computeTargetNavigationDeltaTimeSeconds(long nowNanos) {
         double deltaTimeSeconds = (nowNanos - previousTargetNavigationUpdateTimeNanos) / 1_000_000_000.0;
         if (deltaTimeSeconds <= 0.0) {
             deltaTimeSeconds = 0.001; // Derivative safety fallback.
         }
 
+        return deltaTimeSeconds;
+    }
+
+    private double computeTargetRotationCommand(double deltaTimeSeconds) {
         // Heading derivative (how fast heading error changes) helps damp overshoot.
         double headingErrorRate = AngleUnit.normalizeRadians(targetHeadingErrorRadians - previousTargetHeadingErrorRadians) / deltaTimeSeconds;
         double rotateCommand = (targetHeadingErrorRadians * targetHeadingKp) + (headingErrorRate * targetHeadingKd);
@@ -689,23 +740,7 @@ public class SnapMecanumMover {
             rotateCommand = Math.copySign(targetMinRotationCommand, rotateCommand); // Enough torque to move.
         }
 
-        // Slow down near the point so final approach and heading settle are smoother.
-        if (targetDistanceInches <= Math.max(targetPositionToleranceInches * 2.0, 3.0)) {
-            forwardCommand *= 0.4;
-            rightCommand *= 0.4;
-        }
-
-        // Reuse the existing field-relative drive implementation instead of commanding wheels here.
-        driveFieldRelative(forwardCommand, rightCommand, rotateCommand);
-        lastTargetNavigationCommand = new NavigationCommand(forwardCommand, rightCommand, rotateCommand);
-        previousTargetHeadingErrorRadians = targetHeadingErrorRadians;
-        previousTargetNavigationUpdateTimeNanos = nowNanos;
-        targetNavigationActive = true;
-
-        // Target navigation and trigger-based snap-turn are both heading controllers, so disable the
-        // trigger-based one while autonomous target motion is active.
-        snapTurnActive = false;
-        return false;
+        return rotateCommand;
     }
 
     /**

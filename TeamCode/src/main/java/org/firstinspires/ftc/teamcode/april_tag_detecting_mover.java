@@ -156,6 +156,7 @@ public class april_tag_detecting_mover extends OpMode {
 
         // Passes both controllers and telemetry into the drive helper.
         // Last parameter tells helper whether auto-snap mode is active.
+        // Pass A / A.1 refactor note: call contract is intentionally unchanged.
         snapMecanumMover.loop(gamepad1, gamepad2, telemetry, driver_snapping);
 
         if (driver_snapping) {
