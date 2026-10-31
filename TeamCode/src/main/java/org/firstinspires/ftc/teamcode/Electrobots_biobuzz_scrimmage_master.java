@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.IMU;
 import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
+import org.firstinspires.ftc.teamcode.navigate.MecanumWheelMotorOdometry;
 
 import org.firstinspires.ftc.teamcode.navigate.AprilTagWebcam;
 import org.firstinspires.ftc.teamcode.drivesupport.Robot_Placement;
@@ -42,6 +43,15 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     private static final int BLUE_1 = 3;
     private static final int BLUE_2 = 4;
 
+    private static final double SNAP_STRAFE_POWER = 0.2;
+    private static final double SNAP_CLUSTER_LOCK_PERCENT = 75.0;
+    private static final double SNAP_EAST_SHIFT_ROTATIONS = 1.5;
+    private static final double SNAP_WEST_SHIFT_ROTATIONS = 1.5;
+
+    // true: run full scoring-bin recovery flow (turn + lateral move + re-snap).
+    // false: legacy mode (no east/west move), with side-based yaw snap assist only.
+    private static final boolean SNAP_TO_SCORING_BIN = true;
+
     private IntakeController intakeController;
     private ShooterController shooterController;
     private boolean intakeRoutineActive;
@@ -49,6 +59,20 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
     // Light helper for driver-facing state feedback.
     private LightIndicator lightIndicator;
+
+    private int placementProfile = RED_1;
+    private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
+    private boolean snapRecoveryMoveEast;
+    private boolean snapRecoveryMoveTargetInitialized;
+    private boolean previousSnapRequest;
+
+    private enum SnapRecoveryPhase {
+        IDLE,
+        TURN_INITIAL,
+        MOVE_LATERAL,
+        SNAP_ALIGN,
+        TURN_FINAL
+    }
 
     /*
      * What this method does:
@@ -69,15 +93,164 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
      * - Robot nudges sideways to line the tag up in camera view.
      */
     public void snap_to_tag() {
-        if (aprilTagWebcam.percent_value < 100) {
-            if (aprilTagWebcam.x_value < 0) {
-                snapMecanumMover.driveFieldRelative(-0.2, 0.0, 0.0); // Tag is left, so strafe left.
-            } else if (aprilTagWebcam.x_value > 0) {
-                snapMecanumMover.driveFieldRelative(0.2, 0.0, 0.0); // Tag is right, so strafe right.
-            } else {
-                snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0); // Centered: stop sideways correction.
+        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
+
+        if (!snapTelemetry.hasCluster || snapTelemetry.percentClusterFound >= SNAP_CLUSTER_LOCK_PERCENT) {
+            // Stop early once cluster confidence is good enough, rather than forcing x close to 0.
+            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
+            return;
+        }
+
+        if (aprilTagWebcam.x_value < 0) {
+            snapMecanumMover.driveFieldRelative(0.0, -SNAP_STRAFE_POWER, 0.0); // Tag appears left: strafe left.
+        } else if (aprilTagWebcam.x_value > 0) {
+            snapMecanumMover.driveFieldRelative(0.0, SNAP_STRAFE_POWER, 0.0); // Tag appears right: strafe right.
+        } else {
+            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0); // Already centered enough this cycle.
+        }
+    }
+
+    private boolean isPlacementColorMatch(String clusterName) {
+        if (clusterName == null) {
+            return false;
+        }
+
+        if (placementProfile == RED_1 || placementProfile == RED_2) {
+            return clusterName.startsWith("RED");
+        }
+
+        if (placementProfile == BLUE_1 || placementProfile == BLUE_2) {
+            return clusterName.startsWith("BLUE");
+        }
+
+        return false;
+    }
+
+    private boolean shouldStartSnapRecovery(boolean snapRequested) {
+        if (!SNAP_TO_SCORING_BIN) {
+            return false;
+        }
+
+        if (!snapRequested || snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
+            return false;
+        }
+
+        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
+        if (!snapTelemetry.hasCluster) {
+            return false;
+        }
+
+        // "Non scoring / tipped down" means the cluster is upside-down by roll test.
+        boolean nonScoringTippedDown = Math.abs(snapTelemetry.rollDegrees) >= 90.0;
+        if (!nonScoringTippedDown) {
+            return false;
+        }
+
+        return isPlacementColorMatch(snapTelemetry.clusterName);
+    }
+
+    private void startSnapRecovery() {
+        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
+        boolean audienceSide = snapTelemetry.clusterName != null && snapTelemetry.clusterName.contains("AUDIENCE");
+
+        // If the non-scoring tag is audience side => left trigger + west shift.
+        // Else => right trigger + east shift.
+        snapRecoveryMoveEast = !audienceSide;
+        snapRecoveryMoveTargetInitialized = false;
+
+        if (snapRecoveryMoveEast) {
+            snapMecanumMover.snapTurnRightTriggerShortcut();
+        } else {
+            snapMecanumMover.snapTurnLeftTriggerShortcut();
+        }
+
+        snapRecoveryPhase = SnapRecoveryPhase.TURN_INITIAL;
+    }
+
+    private void runSnapRecoveryRoutine() {
+        if (snapRecoveryPhase == SnapRecoveryPhase.TURN_INITIAL) {
+            if (snapMecanumMover.stepSnapTurn(telemetry)) {
+                snapRecoveryPhase = SnapRecoveryPhase.MOVE_LATERAL;
+                snapRecoveryMoveTargetInitialized = false;
             }
-            // aprilTagWebcam.displayDetections(telemetry); // Useful for debugging camera values on screen.
+            return;
+        }
+
+        if (snapRecoveryPhase == SnapRecoveryPhase.MOVE_LATERAL) {
+            if (!snapRecoveryMoveTargetInitialized) {
+                MecanumWheelMotorOdometry.Pose2d pose = snapMecanumMover.getOdometry().getPose();
+                double shiftInches = (snapRecoveryMoveEast ? SNAP_EAST_SHIFT_ROTATIONS : SNAP_WEST_SHIFT_ROTATIONS)
+                        * MecanumWheelMotorOdometry.WHEEL_CIRCUMFERENCE_INCHES;
+                double targetX = pose.xInches + (snapRecoveryMoveEast ? shiftInches : -shiftInches);
+
+                snapMecanumMover.setTargetPose(targetX, pose.yInches, pose.headingRadians);
+                snapRecoveryMoveTargetInitialized = true;
+            }
+
+            if (snapMecanumMover.navigateToTarget()) {
+                snapMecanumMover.cancelTarget();
+                snapRecoveryPhase = SnapRecoveryPhase.SNAP_ALIGN;
+            }
+            return;
+        }
+
+        if (snapRecoveryPhase == SnapRecoveryPhase.SNAP_ALIGN) {
+            snap_to_tag();
+
+            AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
+            if (!snapTelemetry.hasCluster || snapTelemetry.percentClusterFound >= SNAP_CLUSTER_LOCK_PERCENT) {
+                if (snapRecoveryMoveEast) {
+                    snapMecanumMover.snapTurnRightTriggerShortcut();
+                } else {
+                    snapMecanumMover.snapTurnLeftTriggerShortcut();
+                }
+                snapRecoveryPhase = SnapRecoveryPhase.TURN_FINAL;
+            }
+            return;
+        }
+
+        if (snapRecoveryPhase == SnapRecoveryPhase.TURN_FINAL) {
+            if (snapMecanumMover.stepSnapTurn(telemetry)) {
+                snapRecoveryPhase = SnapRecoveryPhase.IDLE;
+            }
+        }
+    }
+
+    private boolean isScoringSideCluster(String clusterName) {
+        return clusterName != null && clusterName.contains("SCORING");
+    }
+
+    private boolean isAudienceSideCluster(String clusterName) {
+        return clusterName != null && clusterName.contains("AUDIENCE");
+    }
+
+    private void runLegacySnapMode(boolean snapRequestEdge) {
+        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
+        if (!snapTelemetry.hasCluster || !isPlacementColorMatch(snapTelemetry.clusterName)) {
+            return;
+        }
+
+        // Legacy mode yaw assist:
+        // - scoring side => left trigger snap target
+        // - audience side => right trigger snap target
+        if (snapRequestEdge && !snapMecanumMover.isSnapTurnActive()) {
+            if (isScoringSideCluster(snapTelemetry.clusterName)) {
+                snapMecanumMover.snapTurnLeftTriggerShortcut();
+            } else if (isAudienceSideCluster(snapTelemetry.clusterName)) {
+                snapMecanumMover.snapTurnRightTriggerShortcut();
+            }
+        }
+
+        if (snapMecanumMover.isSnapTurnActive()) {
+            snapMecanumMover.stepSnapTurn(telemetry);
+            return;
+        }
+
+        // In legacy mode, strafe alignment is used only on scoring-side target clusters.
+        if (isScoringSideCluster(snapTelemetry.clusterName)) {
+            snap_to_tag();
+        } else {
+            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
         }
     }
 
@@ -165,7 +338,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
         // Choose team/start profile, then it sets the target AprilTag.
         // Keep profile in a variable so we can reuse it for indicator color selection.
-        int placementProfile = RED_1; // Change this if your side/starting position changes.
+        placementProfile = RED_1; // Change this if your side/starting position changes.
 
         robotPlacement = new Robot_Placement();
         robotPlacement.init(placementProfile);
@@ -179,6 +352,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
         shooterController = new ShooterController();
         shooterController.init(hardwareMap);
+
+        // Needed for short distance shifts during assisted snap recovery.
+        snapMecanumMover.initializeOdometry();
 
         // Light setup:
         // - hardware name expected in Robot Config: "ftc_light"
@@ -207,21 +383,47 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
      */
     @Override
     public void loop() {
-        boolean tagDetected = aprilTagWebcam.updateDetections();
+        aprilTagWebcam.updateDetections();
         // Must be true for BOTH conditions:
         // - driver is holding right bumper
-        // - camera currently sees the target tag
-        boolean driver_snapping = gamepad2.right_bumper && tagDetected;
+        // - camera currently sees any tag
+        boolean driverSnappingRequested = gamepad2.right_bumper;
+        boolean driver_snapping = driverSnappingRequested && aprilTagWebcam.hasActiveTags();
+        boolean snapRequestEdge = driverSnappingRequested && !previousSnapRequest;
+        previousSnapRequest = driverSnappingRequested;
         //telemetry.addData("tag detected value:", tagDetected);
+
+        if (!SNAP_TO_SCORING_BIN && snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
+            // Safety: if mode is switched to legacy behavior, stop any in-progress lateral recovery.
+            snapMecanumMover.cancelTarget();
+            snapRecoveryPhase = SnapRecoveryPhase.IDLE;
+            snapRecoveryMoveTargetInitialized = false;
+        }
+
+        if (shouldStartSnapRecovery(driverSnappingRequested)) {
+            startSnapRecovery();
+        }
 
         // Passes both controllers and telemetry into the drive helper.
         // Last parameter tells helper whether auto-snap mode is active.
         // Pass A / A.1 refactor note: call contract is intentionally unchanged.
-        snapMecanumMover.loop(gamepad1, gamepad2, telemetry, driver_snapping);
+        boolean legacyYawSnapActive = !SNAP_TO_SCORING_BIN && snapMecanumMover.isSnapTurnActive();
+        boolean snapRoutineActive = driver_snapping || snapRecoveryPhase != SnapRecoveryPhase.IDLE || legacyYawSnapActive;
+        snapMecanumMover.loop(gamepad1, gamepad2, telemetry, snapRoutineActive);
 
-        if (driver_snapping) {
-            snap_to_tag(); // Extra correction only when snap mode is requested and tag is detected.
+        if (SNAP_TO_SCORING_BIN && snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
+            runSnapRecoveryRoutine();
+            telemetry.addData("Snap recovery", snapRecoveryPhase.name());
+        } else if (driver_snapping) {
+            if (SNAP_TO_SCORING_BIN) {
+                snap_to_tag(); // Extra correction only when snap mode is requested and tag is detected.
+            } else {
+                runLegacySnapMode(snapRequestEdge);
+            }
             addSnapToTagTelemetry();
+        } else if (!SNAP_TO_SCORING_BIN && snapMecanumMover.isSnapTurnActive()) {
+            // Finish legacy yaw snap cleanly even if driver released the button mid-turn.
+            snapMecanumMover.stepSnapTurn(telemetry);
         }
 
         boolean intakeRequested = gamepad2.left_trigger > ScoringConfig.TRIGGER_THRESHOLD;

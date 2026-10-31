@@ -268,6 +268,36 @@ public class SnapMecanumMover {
         }
     }
 
+    /** Starts the same snap-turn target as pressing the right trigger shortcut. */
+    public void snapTurnRightTriggerShortcut() {
+        startSnapTurn(RIGHT_TRIGGER_TARGET_RADIANS);
+    }
+
+    /** Starts the same snap-turn target as pressing the left trigger shortcut. */
+    public void snapTurnLeftTriggerShortcut() {
+        startSnapTurn(LEFT_TRIGGER_TARGET_RADIANS);
+    }
+
+    /** Returns true when trigger-style snap-turn is currently active. */
+    public boolean isSnapTurnActive() {
+        return snapTurnActive;
+    }
+
+    /**
+     * Runs one control step for trigger-style snap-turn without joystick translation.
+     *
+     * @return true when snap-turn is complete (inactive), false while still turning.
+     */
+    public boolean stepSnapTurn(Telemetry telemetry) {
+        if (!snapTurnActive) {
+            return true;
+        }
+
+        double rotateCommand = -getSnapTurnCommand(telemetry);
+        drive(0.0, 0.0, rotateCommand);
+        return !snapTurnActive;
+    }
+
     /**
      * Starts a snap-turn request toward a target heading.
      *
