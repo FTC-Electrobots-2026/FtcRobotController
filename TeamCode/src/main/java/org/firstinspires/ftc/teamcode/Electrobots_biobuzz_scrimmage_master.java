@@ -16,6 +16,8 @@ import org.firstinspires.ftc.teamcode.scoring.ShooterController;
 import org.firstinspires.ftc.teamcode.scoring.ScoringConfig;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
+@TeleOp(name = "Teleop-Scrimmage_v1", group = "Scrimmage")
+
 public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     // Four drive motors for a mecanum drivetrain.
     DcMotor frontLeftDrive;
@@ -69,9 +71,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     public void snap_to_tag() {
         if (aprilTagWebcam.percent_value < 100) {
             if (aprilTagWebcam.x_value < 0) {
-                snapMecanumMover.driveFieldRelative(0.0, -0.2, 0.0); // Tag is left, so strafe left.
+                snapMecanumMover.driveFieldRelative(-0.2, 0.0, 0.0); // Tag is left, so strafe left.
             } else if (aprilTagWebcam.x_value > 0) {
-                snapMecanumMover.driveFieldRelative(0.0, 0.2, 0.0); // Tag is right, so strafe right.
+                snapMecanumMover.driveFieldRelative(0.2, 0.0, 0.0); // Tag is right, so strafe right.
             } else {
                 snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0); // Centered: stop sideways correction.
             }
@@ -210,6 +212,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         // - driver is holding right bumper
         // - camera currently sees the target tag
         boolean driver_snapping = gamepad2.right_bumper && tagDetected;
+        //telemetry.addData("tag detected value:", tagDetected);
 
         // Passes both controllers and telemetry into the drive helper.
         // Last parameter tells helper whether auto-snap mode is active.

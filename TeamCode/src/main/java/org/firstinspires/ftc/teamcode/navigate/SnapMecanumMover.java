@@ -81,16 +81,16 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 public class SnapMecanumMover {
     // Predefined snap headings for the trigger shortcuts.
     // In this codebase, 0 radians means field north.
-    private static final double RIGHT_TRIGGER_TARGET_RADIANS = -Math.PI / 2.0;
-    private static final double LEFT_TRIGGER_TARGET_RADIANS = Math.PI / 2.0;
+    private static final double RIGHT_TRIGGER_TARGET_RADIANS = DriveConfig.RIGHT_TRIGGER_TARGET_RADIANS;
+    private static final double LEFT_TRIGGER_TARGET_RADIANS = DriveConfig.LEFT_TRIGGER_TARGET_RADIANS;
 
     // Snap-turn controller tolerances and shaping constants.
     // Layer 1: these numbers control how "snappy" or "gentle" turning feels.
     // Layer 2: these values shape acceleration, deceleration, and settling behavior.
-    private static final double TURN_STOP_DEADBAND_RADIANS = Math.toRadians(1.0);
-    private static final double SETTLE_TOLERANCE_RADIANS = Math.toRadians(2.0);
-    private static final double BRAKE_ZONE_RADIANS = Math.toRadians(45.0);
-    private static final double FINE_CONTROL_ZONE_RADIANS = Math.toRadians(6.0);
+    private static final double TURN_STOP_DEADBAND_RADIANS = DriveConfig.TURN_STOP_DEADBAND_RADIANS;
+    private static final double SETTLE_TOLERANCE_RADIANS = DriveConfig.SETTLE_TOLERANCE_RADIANS;
+    private static final double BRAKE_ZONE_RADIANS = DriveConfig.BRAKE_ZONE_RADIANS;
+    private static final double FINE_CONTROL_ZONE_RADIANS = DriveConfig.FINE_CONTROL_ZONE_RADIANS;
     // PD baseline gains (there is no I term in snap-turn path here).
     // Kp gives the baseline turn push from heading error.
     private static final double SNAP_TURN_KP = 0.76;
@@ -98,31 +98,20 @@ public class SnapMecanumMover {
     // Kd adds damping using error-rate so the robot does not swing past target too hard.
     private static final double SNAP_TURN_KD = 0.35;
     // Turn acceleration/deceleration shaping limits.
-    private static final double SNAP_TURN_MAX_POWER = 0.70;
-    private static final double SNAP_TURN_BRAKE_MAX_POWER = 0.70;
-    private static final double SNAP_TURN_SETTLE_MAX_POWER = 0.17;
-    private static final double SNAP_TURN_MIN_POWER = 0.14;
-    private static final double SNAP_TURN_BRAKE_MIN_POWER = 0.10;
-    private static final double MAX_SETTLED_TURN_RATE_RADIANS = Math.toRadians(5.0);
-    private static final int REQUIRED_SETTLED_LOOPS = 7;
-    private static final double TRIGGER_THRESHOLD = 0.5;
-    private static final double MANUAL_ROTATE_DEADBAND = 0.05;
-    private static final double SNAP_TURN_MAX_ERROR_RATE_RADIANS_PER_SECOND = Math.toRadians(300.0);
-    private static final double SNAP_TURN_ERROR_RATE_FILTER_ALPHA = 0.72;
+    private static final double SNAP_TURN_MAX_POWER = DriveConfig.SNAP_TURN_MAX_POWER;
+    private static final double SNAP_TURN_BRAKE_MAX_POWER = DriveConfig.SNAP_TURN_BRAKE_MAX_POWER;
+    private static final double SNAP_TURN_SETTLE_MAX_POWER = DriveConfig.SNAP_TURN_SETTLE_MAX_POWER;
+    private static final double SNAP_TURN_MIN_POWER = DriveConfig.SNAP_TURN_MIN_POWER;
+    private static final double SNAP_TURN_BRAKE_MIN_POWER = DriveConfig.SNAP_TURN_BRAKE_MIN_POWER;
+    private static final double MAX_SETTLED_TURN_RATE_RADIANS = DriveConfig.MAX_SETTLED_TURN_RATE_RADIANS;
+    private static final int REQUIRED_SETTLED_LOOPS = DriveConfig.REQUIRED_SETTLED_LOOPS;
+    private static final double TRIGGER_THRESHOLD = DriveConfig.TRIGGER_THRESHOLD;
+    private static final double MANUAL_ROTATE_DEADBAND = DriveConfig.MANUAL_ROTATE_DEADBAND;
+    private static final double SNAP_TURN_MAX_ERROR_RATE_RADIANS_PER_SECOND = DriveConfig.SNAP_TURN_MAX_ERROR_RATE_RADIANS_PER_SECOND;
+    private static final double SNAP_TURN_ERROR_RATE_FILTER_ALPHA = DriveConfig.SNAP_TURN_ERROR_RATE_FILTER_ALPHA;
     // Slew limit: max amount rotate command is allowed to change per second.
     // This smooths acceleration so command does not jump suddenly.
-    private static final double SNAP_TURN_MAX_COMMAND_SLEW_PER_SECOND = 3.2;
-
-    // Separate tuning values for odometry-driven point-to-point navigation.
-    private static final double TARGET_POSITION_TOLERANCE_INCHES = 1.5;
-    private static final double TARGET_HEADING_TOLERANCE_RADIANS = Math.toRadians(3.0);
-    private static final double TARGET_TRANSLATION_KP = 0.035;
-    private static final double TARGET_HEADING_KP = 0.018;
-    private static final double TARGET_HEADING_KD = 0.0015;
-    private static final double TARGET_MAX_TRANSLATION_COMMAND = 0.65;
-    private static final double TARGET_MIN_TRANSLATION_COMMAND = 0.12;
-    private static final double TARGET_MAX_ROTATION_COMMAND = 0.55;
-    private static final double TARGET_MIN_ROTATION_COMMAND = 0.10;
+    private static final double SNAP_TURN_MAX_COMMAND_SLEW_PER_SECOND = DriveConfig.SNAP_TURN_MAX_COMMAND_SLEW_PER_SECOND;
 
     private final DcMotor frontLeftDrive;
     private final DcMotor frontRightDrive;
@@ -148,26 +137,8 @@ public class SnapMecanumMover {
     // Odometry is created only if a caller actually uses localization/navigation features.
     private MecanumWheelMotorOdometry odometry;
 
-    // Active target-pose state for "go here and face this way" navigation.
-    // These fields hold both "goal settings" and "live error values".
-    private MecanumWheelMotorOdometry.Pose2d targetPose;
-    private boolean targetNavigationActive = false;
-    private double targetPositionToleranceInches = TARGET_POSITION_TOLERANCE_INCHES;
-    private double targetHeadingToleranceRadians = TARGET_HEADING_TOLERANCE_RADIANS;
-    private double targetTranslationKp = TARGET_TRANSLATION_KP;
-    private double targetHeadingKp = TARGET_HEADING_KP;
-    private double targetHeadingKd = TARGET_HEADING_KD;
-    private double targetMaxTranslationCommand = TARGET_MAX_TRANSLATION_COMMAND;
-    private double targetMinTranslationCommand = TARGET_MIN_TRANSLATION_COMMAND;
-    private double targetMaxRotationCommand = TARGET_MAX_ROTATION_COMMAND;
-    private double targetMinRotationCommand = TARGET_MIN_ROTATION_COMMAND;
-    private double targetDistanceInches = 0.0;
-    private double targetHeadingErrorRadians = 0.0;
-    private double previousTargetHeadingErrorRadians = 0.0;
-    private long previousTargetNavigationUpdateTimeNanos = 0L;
-
-    // Stores the last command generated by target navigation for debugging/telemetry.
-    private NavigationCommand lastTargetNavigationCommand = new NavigationCommand(0.0, 0.0, 0.0);
+    // Target navigation orchestration is delegated to a dedicated helper.
+    private final TargetNavigationController targetNavigationController = new TargetNavigationController();
 
     /**
      * Builds this drive helper and stores references to hardware.
@@ -584,22 +555,7 @@ public class SnapMecanumMover {
      * - Resets derivative memory so heading controller starts clean on new target.
      */
     public void setTargetPose(double xInches, double yInches, double headingRadians) {
-        MecanumWheelMotorOdometry activeOdometry = getOdometry();
-
-        // If clamping is on, this prevents accidental impossible targets outside field.
-        double targetXInches = activeOdometry.isClampPoseToField()
-                ? Range.clip(xInches, 0.0, activeOdometry.getFieldSizeInches())
-                : xInches;
-        double targetYInches = activeOdometry.isClampPoseToField()
-                ? Range.clip(yInches, 0.0, activeOdometry.getFieldSizeInches())
-                : yInches;
-
-        targetPose = new MecanumWheelMotorOdometry.Pose2d(targetXInches, targetYInches, headingRadians);
-        targetNavigationActive = true;
-
-        // Reset derivative state whenever a brand-new target is chosen.
-        previousTargetHeadingErrorRadians = 0.0;
-        previousTargetNavigationUpdateTimeNanos = System.nanoTime();
+        targetNavigationController.setTargetPose(xInches, yInches, headingRadians, getOdometry());
     }
 
     /**
@@ -619,128 +575,15 @@ public class SnapMecanumMover {
      * 7) Drive field-relative and store command for telemetry
      */
     public boolean navigateToTarget() {
-        MecanumWheelMotorOdometry activeOdometry = getOdometry();
-        activeOdometry.update();
-
-        // No target means there is nothing to do; stop cleanly and report success.
-        if (stopIfTargetMissing()) {
-            return true;
-        }
-
-        updateTargetErrors(activeOdometry);
-
-        // If we are already close enough in both position and heading, stop driving.
-        if (stopIfAlreadyAtTarget()) {
-            return true;
-        }
-
-        NavigationCommand translationOnlyCommand = computeTargetTranslationCommand(activeOdometry);
-        double forwardCommand = translationOnlyCommand.forward;
-        double rightCommand = translationOnlyCommand.right;
-
-        long nowNanos = System.nanoTime();
-        double deltaTimeSeconds = computeTargetNavigationDeltaTimeSeconds(nowNanos);
-        double rotateCommand = computeTargetRotationCommand(deltaTimeSeconds);
-
-        // Slow down near the point so final approach and heading settle are smoother.
-        if (targetDistanceInches <= Math.max(targetPositionToleranceInches * 2.0, 3.0)) {
-            forwardCommand *= 0.4;
-            rightCommand *= 0.4;
-        }
-
-        // Reuse the existing field-relative drive implementation instead of commanding wheels here.
-        driveFieldRelative(forwardCommand, rightCommand, rotateCommand);
-        lastTargetNavigationCommand = new NavigationCommand(forwardCommand, rightCommand, rotateCommand);
-        previousTargetHeadingErrorRadians = targetHeadingErrorRadians;
-        previousTargetNavigationUpdateTimeNanos = nowNanos;
-        targetNavigationActive = true;
+        boolean targetReached = targetNavigationController.navigateToTarget(getOdometry(), this::driveFieldRelative);
 
         // Target navigation and trigger-based snap-turn are both heading controllers, so disable the
         // trigger-based one while autonomous target motion is active.
-        snapTurnActive = false;
-        return false;
-    }
-
-    private boolean stopIfTargetMissing() {
-        if (targetPose == null) {
-            stopTargetNavigation();
-            targetNavigationActive = false;
-            return true;
+        if (!targetReached) {
+            snapTurnActive = false;
         }
 
-        return false;
-    }
-
-    private boolean stopIfAlreadyAtTarget() {
-        if (isAtTarget()) {
-            stopTargetNavigation();
-            targetNavigationActive = false;
-            return true;
-        }
-
-        return false;
-    }
-
-    private NavigationCommand computeTargetTranslationCommand(MecanumWheelMotorOdometry activeOdometry) {
-        // Proportional position controller:
-        // bigger position error -> bigger movement command.
-        double rightCommand = (targetPose.xInches - activeOdometry.getXInches()) * targetTranslationKp;
-        double forwardCommand = (targetPose.yInches - activeOdometry.getYInches()) * targetTranslationKp;
-        double translationMagnitude = Math.hypot(forwardCommand, rightCommand);
-
-        // Once close enough to the point, stop translating and just clean up heading.
-        if (targetDistanceInches <= targetPositionToleranceInches) {
-            forwardCommand = 0.0;
-            rightCommand = 0.0;
-        } else {
-            // Clamp translation so the robot remains controllable and consistent.
-            if (translationMagnitude > targetMaxTranslationCommand && translationMagnitude > 0.0) {
-                double scale = targetMaxTranslationCommand / translationMagnitude;
-                forwardCommand *= scale;
-                rightCommand *= scale;
-                translationMagnitude = targetMaxTranslationCommand;
-                // Scale both axes equally so direction stays same while speed is reduced.
-            }
-
-            if (translationMagnitude < targetMinTranslationCommand && translationMagnitude > 0.0) {
-                double scale = targetMinTranslationCommand / translationMagnitude;
-                forwardCommand *= scale;
-                rightCommand *= scale;
-                // Raise tiny commands to avoid stalling against friction.
-            }
-
-            // Reduce translation while the heading error is large to keep the path more stable.
-            double headingScale = Range.clip(1.0 - (Math.abs(targetHeadingErrorRadians) / Math.PI), 0.25, 1.0);
-            forwardCommand *= headingScale;
-            rightCommand *= headingScale;
-            // When facing far away from goal heading, reduce translation to keep path controlled.
-        }
-
-        return new NavigationCommand(forwardCommand, rightCommand, 0.0);
-    }
-
-    private double computeTargetNavigationDeltaTimeSeconds(long nowNanos) {
-        double deltaTimeSeconds = (nowNanos - previousTargetNavigationUpdateTimeNanos) / 1_000_000_000.0;
-        if (deltaTimeSeconds <= 0.0) {
-            deltaTimeSeconds = 0.001; // Derivative safety fallback.
-        }
-
-        return deltaTimeSeconds;
-    }
-
-    private double computeTargetRotationCommand(double deltaTimeSeconds) {
-        // Heading derivative (how fast heading error changes) helps damp overshoot.
-        double headingErrorRate = AngleUnit.normalizeRadians(targetHeadingErrorRadians - previousTargetHeadingErrorRadians) / deltaTimeSeconds;
-        double rotateCommand = (targetHeadingErrorRadians * targetHeadingKp) + (headingErrorRate * targetHeadingKd);
-        rotateCommand = Range.clip(rotateCommand, -targetMaxRotationCommand, targetMaxRotationCommand);
-
-        if (Math.abs(targetHeadingErrorRadians) <= targetHeadingToleranceRadians) {
-            rotateCommand = 0.0; // Inside tolerance: stop spinning.
-        } else if (Math.abs(rotateCommand) < targetMinRotationCommand) {
-            rotateCommand = Math.copySign(targetMinRotationCommand, rotateCommand); // Enough torque to move.
-        }
-
-        return rotateCommand;
+        return targetReached;
     }
 
     /**
@@ -750,13 +593,7 @@ public class SnapMecanumMover {
      * - true when "close enough" by configured tolerances.
      */
     public boolean isAtTarget() {
-        if (targetPose == null) {
-            return true;
-        }
-
-        updateTargetErrors(getOdometry());
-        return targetDistanceInches <= targetPositionToleranceInches
-                && Math.abs(targetHeadingErrorRadians) <= targetHeadingToleranceRadians;
+        return targetNavigationController.isAtTarget(getOdometry());
     }
 
     /**
@@ -768,12 +605,7 @@ public class SnapMecanumMover {
      * - Robot commanded to stop via stopTargetNavigation()
      */
     public void cancelTarget() {
-        targetPose = null;
-        targetNavigationActive = false;
-        targetDistanceInches = 0.0;
-        targetHeadingErrorRadians = 0.0;
-        previousTargetHeadingErrorRadians = 0.0;
-        stopTargetNavigation();
+        targetNavigationController.cancelTarget(this::driveFieldRelative);
     }
 
     /**
@@ -785,57 +617,7 @@ public class SnapMecanumMover {
      * - Shows last command actually issued by controller
      */
     public void addTargetNavigationTelemetry(Telemetry telemetry) {
-        telemetry.addLine("=== SNAP TARGET NAVIGATION ===");
-        telemetry.addData("Target navigation active", targetNavigationActive ? "YES" : "NO");
-        telemetry.addData("At target", isAtTarget() ? "YES" : "NO");
-
-        if (targetPose != null) {
-            telemetry.addData("Target X / Y (in)", "%.2f / %.2f", targetPose.xInches, targetPose.yInches);
-            telemetry.addData("Target X / Y (ft)", "%.2f / %.2f", targetPose.getXFeet(), targetPose.getYFeet());
-            telemetry.addData("Target heading (deg)", "%.2f", targetPose.getHeadingDegrees());
-            telemetry.addData("Target distance (in)", "%.2f", targetDistanceInches);
-            telemetry.addData("Target heading error (deg)", "%.2f", Math.toDegrees(targetHeadingErrorRadians));
-        }
-
-        telemetry.addData("Last nav F / R / Turn", "%.3f / %.3f / %.3f",
-                lastTargetNavigationCommand.forward,
-                lastTargetNavigationCommand.right,
-                lastTargetNavigationCommand.rotate);
-    }
-
-    /**
-     * Recomputes live error values from current odometry to target pose.
-     *
-     * Parameter:
-     * - activeOdometry: current localization estimate provider
-     *
-     * Computed outputs:
-     * - targetDistanceInches: straight-line distance left to goal
-     * - targetHeadingErrorRadians: signed angle left to align heading
-     */
-    private void updateTargetErrors(MecanumWheelMotorOdometry activeOdometry) {
-        if (targetPose == null) {
-            targetDistanceInches = 0.0;
-            targetHeadingErrorRadians = 0.0;
-            return;
-        }
-
-        double xErrorInches = targetPose.xInches - activeOdometry.getXInches();
-        double yErrorInches = targetPose.yInches - activeOdometry.getYInches();
-        targetDistanceInches = Math.hypot(xErrorInches, yErrorInches); // Pythagorean distance in XY plane.
-        targetHeadingErrorRadians = AngleUnit.normalizeRadians(targetPose.headingRadians - activeOdometry.getHeadingRadians());
-    }
-
-    /**
-     * Stops navigation-produced motion immediately.
-     *
-     * Implementation detail:
-     * - Sends zero field-relative command
-     * - Resets stored last command so telemetry reflects the stop
-     */
-    private void stopTargetNavigation() {
-        driveFieldRelative(0.0, 0.0, 0.0);
-        lastTargetNavigationCommand = new NavigationCommand(0.0, 0.0, 0.0);
+        targetNavigationController.addTargetNavigationTelemetry(telemetry, getOdometry());
     }
 
     /**
