@@ -94,9 +94,8 @@ public class SnapMecanumMover {
     // PD baseline gains (there is no I term in snap-turn path here).
     // Kp gives the baseline turn push from heading error.
     private static final double SNAP_TURN_KP = 0.76;
-    //private static final double SNAP_TURN_KD = 0.60;
     // Kd adds damping using error-rate so the robot does not swing past target too hard.
-    private static final double SNAP_TURN_KD = 0.35;
+    private static final double SNAP_TURN_KD = 0.60;
     // Turn acceleration/deceleration shaping limits.
     private static final double SNAP_TURN_MAX_POWER = DriveConfig.SNAP_TURN_MAX_POWER;
     private static final double SNAP_TURN_BRAKE_MAX_POWER = DriveConfig.SNAP_TURN_BRAKE_MAX_POWER;
