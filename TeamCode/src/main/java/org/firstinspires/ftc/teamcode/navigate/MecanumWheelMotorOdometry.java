@@ -57,10 +57,10 @@ import java.util.Locale;
  * 10) Compute velocity and save current values for next loop.
  */
 public class MecanumWheelMotorOdometry {
-    public static final double FIELD_SIZE_FEET = 12.0;
+    public static final double FIELD_SIZE_FEET = DriveConfig.FIELD_SIZE_FEET;
     public static final double FIELD_SIZE_INCHES = FIELD_SIZE_FEET * 12.0;
 
-    public static final double WHEEL_DIAMETER_MM = 104.0;
+    public static final double WHEEL_DIAMETER_MM = DriveConfig.WHEEL_DIAMETER_MM;
     public static final double WHEEL_DIAMETER_INCHES = WHEEL_DIAMETER_MM / 25.4;
     public static final double WHEEL_CIRCUMFERENCE_INCHES = Math.PI * WHEEL_DIAMETER_INCHES;
 
@@ -68,14 +68,14 @@ public class MecanumWheelMotorOdometry {
      * goBILDA 5202 19.2:1 motors are typically treated as 537.7 ticks per output-shaft rev.
      * That matches the constant already used elsewhere in this codebase.
      */
-    public static final double DEFAULT_TICKS_PER_WHEEL_REVOLUTION = 537.7;
+    public static final double DEFAULT_TICKS_PER_WHEEL_REVOLUTION = DriveConfig.DEFAULT_TICKS_PER_WHEEL_REVOLUTION;
 
     /**
      * These defaults are placeholders until you measure your specific robot.
      * They mainly affect wheel-only heading estimation.
      */
-    public static final double DEFAULT_TRACK_WIDTH_INCHES = 15.0;
-    public static final double DEFAULT_WHEEL_BASE_INCHES = 15.0;
+    public static final double DEFAULT_TRACK_WIDTH_INCHES = DriveConfig.DEFAULT_TRACK_WIDTH_INCHES;
+    public static final double DEFAULT_WHEEL_BASE_INCHES = DriveConfig.DEFAULT_WHEEL_BASE_INCHES;
 
     private final DcMotor frontLeftDrive;
     private final DcMotor frontRightDrive;
@@ -234,12 +234,27 @@ public class MecanumWheelMotorOdometry {
         previousBackRightTicks = currentBackRightTicks;
 
         // Mecanum math: combine wheel deltas into robot-local translation.
-        localForwardDeltaInches = (frontLeftDeltaInches + frontRightDeltaInches + backRightDeltaInches + backLeftDeltaInches) / 4.0;
-        localRightDeltaInches = (frontLeftDeltaInches - frontRightDeltaInches + backRightDeltaInches - backLeftDeltaInches) / 4.0;
+        localForwardDeltaInches = MecanumOdometryMath.computeLocalForwardDelta(
+                frontLeftDeltaInches,
+                frontRightDeltaInches,
+                backRightDeltaInches,
+                backLeftDeltaInches
+        );
+        localRightDeltaInches = MecanumOdometryMath.computeLocalRightDelta(
+                frontLeftDeltaInches,
+                frontRightDeltaInches,
+                backRightDeltaInches,
+                backLeftDeltaInches
+        );
 
         // Wheel-based heading estimate from left/right wheel disagreement.
-        encoderHeadingDeltaRadians = (frontLeftDeltaInches - frontRightDeltaInches - backRightDeltaInches + backLeftDeltaInches)
-                / (4.0 * getEffectiveTurnRadiusInches());
+        encoderHeadingDeltaRadians = MecanumOdometryMath.computeEncoderHeadingDelta(
+                frontLeftDeltaInches,
+                frontRightDeltaInches,
+                backRightDeltaInches,
+                backLeftDeltaInches,
+                getEffectiveTurnRadiusInches()
+        );
         encoderHeadingRadians = AngleUnit.normalizeRadians(encoderHeadingRadians + encoderHeadingDeltaRadians);
 
         imuHeadingRadians = readImuHeadingRadians();
@@ -250,13 +265,19 @@ public class MecanumWheelMotorOdometry {
         double currentUsedHeadingRadians = useImuHeading ? imuHeadingRadians : encoderHeadingRadians;
         double headingDeltaRadians = useImuHeading ? imuHeadingDeltaRadians : encoderHeadingDeltaRadians;
         // Average heading over the small loop interval improves translation rotation accuracy.
-        double averageHeadingRadians = AngleUnit.normalizeRadians(previousUsedHeadingRadians + (headingDeltaRadians / 2.0));
+        double averageHeadingRadians = MecanumOdometryMath.computeAverageHeading(previousUsedHeadingRadians, headingDeltaRadians);
 
         // Rotate robot-local movement into field coordinates.
-        fieldXDeltaInches = (localRightDeltaInches * Math.cos(averageHeadingRadians))
-                - (localForwardDeltaInches * Math.sin(averageHeadingRadians));
-        fieldYDeltaInches = (localRightDeltaInches * Math.sin(averageHeadingRadians))
-                + (localForwardDeltaInches * Math.cos(averageHeadingRadians));
+        fieldXDeltaInches = MecanumOdometryMath.computeFieldXDelta(
+                localRightDeltaInches,
+                localForwardDeltaInches,
+                averageHeadingRadians
+        );
+        fieldYDeltaInches = MecanumOdometryMath.computeFieldYDelta(
+                localRightDeltaInches,
+                localForwardDeltaInches,
+                averageHeadingRadians
+        );
 
         xInches += fieldXDeltaInches;
         yInches += fieldYDeltaInches;
@@ -452,7 +473,7 @@ public class MecanumWheelMotorOdometry {
 
     /** Converts encoder ticks to inches traveled by wheel circumference math. */
     private double ticksToInches(int ticks) {
-        return ticks * getInchesPerTick();
+        return MecanumOdometryMath.ticksToInches(ticks, getInchesPerTick());
     }
 
     /**
