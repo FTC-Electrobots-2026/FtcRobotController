@@ -94,9 +94,9 @@ public class SnapMecanumMover {
     private static final double FINE_CONTROL_ZONE_RADIANS = DriveConfig.FINE_CONTROL_ZONE_RADIANS;
     // PD baseline gains (there is no I term in snap-turn path here).
     // Kp gives the baseline turn push from heading error.
-    private static final double SNAP_TURN_KP = 0.76;
+    private static final double SNAP_TURN_KP = 0.62;
     // Kd adds damping using error-rate so the robot does not swing past target too hard.
-    private static final double SNAP_TURN_KD = 0.60;
+    private static final double SNAP_TURN_KD = 0.00;
     // Turn acceleration/deceleration shaping limits.
     private static final double SNAP_TURN_MAX_POWER = DriveConfig.SNAP_TURN_MAX_POWER;
     private static final double SNAP_TURN_BRAKE_MAX_POWER = DriveConfig.SNAP_TURN_BRAKE_MAX_POWER;
@@ -486,9 +486,14 @@ public class SnapMecanumMover {
 
         rotateCommand = Range.clip(rotateCommand, -maxAllowedPower, maxAllowedPower); // Keep command in safe bounds.
 
+        if (rotateCommand * headingError < 0.0) {
+            // Never command a correction that points away from the target heading.
+            rotateCommand = 0.0;
+        }
+
         if (minAllowedPower > 0.0 && Math.abs(rotateCommand) < minAllowedPower) {
-            rotateCommand = Math.copySign(minAllowedPower, rotateCommand);
-            // Keep same direction, but ensure enough power to overcome static friction.
+            rotateCommand = Math.copySign(minAllowedPower, headingError);
+            // Enforce minimum torque in the target-facing direction to avoid sign-flip jitter.
         }
 
         // Acceleration/deceleration smoothing:
