@@ -59,6 +59,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
     // Light helper for driver-facing state feedback.
     private LightIndicator lightIndicator;
+    private LightIndicator.LightColor placementLightColor;
 
     private int placementProfile = RED_1;
     private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
@@ -363,11 +364,11 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         lightIndicator = new LightIndicator();
         lightIndicator.init(hardwareMap);
 
-        LightIndicator.LightColor placementColor =
+        placementLightColor =
                 (placementProfile == RED_1 || placementProfile == RED_2)
                         ? LightIndicator.RED
                         : LightIndicator.BLUE;
-        lightIndicator.state(true, placementColor); // Turn on using placement profile color.
+        lightIndicator.state(true, placementLightColor); // Turn on using placement profile color.
 
         intakeRoutineActive = false;
         shooterRoutineActive = false;
@@ -456,6 +457,12 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
             shooterRoutineActive = true;
 
             if (shooterRequested) {
+                lightIndicator.state(true, shooterController.isReady() ? LightIndicator.GREEN : placementLightColor);
+            } else {
+                lightIndicator.state(true, placementLightColor);
+            }
+
+            if (shooterRequested) {
                 double shooterRpm = shooterController.getLastRpm();
                 double shooterTargetRpm = shooterController.getTargetRpm();
                 double shooterPower = shooterController.getLastPower();
@@ -476,6 +483,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         } else if (shooterRoutineActive) {
             shooterController.stop();
             shooterRoutineActive = false;
+            lightIndicator.state(true, placementLightColor);
         }
 
         telemetry.update();
