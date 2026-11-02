@@ -8,7 +8,7 @@ import org.firstinspires.ftc.teamcode.navigate.MecanumWheelMotorOdometry;
 import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
 
 /**
- * Converts high-level field commands into target poses for SnapMecanumMover navigation.
+ * Converts high-level field commands into  target poses for SnapMecanumMover navigation.
  */
 public class FieldMovementDispatcher {
     private final SnapMecanumMover mover;

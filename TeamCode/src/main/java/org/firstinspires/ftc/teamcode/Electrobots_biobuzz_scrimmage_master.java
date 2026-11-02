@@ -418,7 +418,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
             telemetry.addData("Snap recovery", snapRecoveryPhase.name());
         } else if (driver_snapping) {
             if (SNAP_TO_SCORING_BIN) {
-                snap_to_tag(); // Extra correction only when snap mode is requested and tag is detected.
+                snap_to_tag(); // Extra  correction only when snap mode is requested and tag is detected.
             } else {
                 runLegacySnapMode(snapRequestEdge);
             }
