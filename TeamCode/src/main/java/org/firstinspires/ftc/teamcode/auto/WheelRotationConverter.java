@@ -3,7 +3,7 @@ package org.firstinspires.ftc.teamcode.auto;
 import org.firstinspires.ftc.teamcode.navigate.DriveConfig;
 
 /**
- * Converts wheel rotation counts to linear travel distance in inches.
+ * Converts wheel rotation counts to linear t ravel distance in inches.
  */
 public final class WheelRotationConverter {
 

@@ -7,7 +7,7 @@ import java.util.Queue;
 import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
 
 /**
- * Queues and executes field-oriented autonomous commands via SnapMecanumMover navigation.
+ * Queues and executes field-oriented auto nomous commands via SnapMecanumMover navigation.
  */
 public class AutoRunner {
     private static final double MOVE_TIMEOUT_SECONDS = 7.0;
