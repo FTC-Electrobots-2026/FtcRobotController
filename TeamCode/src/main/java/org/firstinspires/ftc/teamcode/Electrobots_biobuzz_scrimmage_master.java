@@ -6,10 +6,11 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.IMU;
+import org.firstinspires.ftc.teamcode.navigate.AprilTagWebcam;
 import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
 import org.firstinspires.ftc.teamcode.navigate.MecanumWheelMotorOdometry;
+import org.firstinspires.ftc.teamcode.navigate.SnapToAprilTagHelper;
 
-import org.firstinspires.ftc.teamcode.navigate.AprilTagWebcam;
 import org.firstinspires.ftc.teamcode.drivesupport.Robot_Placement;
 import org.firstinspires.ftc.teamcode.drivesupport.LightIndicator;
 import org.firstinspires.ftc.teamcode.scoring.IntakeController;
@@ -43,14 +44,12 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     private static final int BLUE_1 = 3;
     private static final int BLUE_2 = 4;
 
-    private static final double SNAP_STRAFE_POWER = 0.2;
-    private static final double SNAP_CLUSTER_LOCK_PERCENT = 75.0;
     private static final double SNAP_EAST_SHIFT_ROTATIONS = 1.5;
     private static final double SNAP_WEST_SHIFT_ROTATIONS = 1.5;
 
     // true: run full scoring-bin recovery flow (turn + lateral move + re-snap).
     // false: legacy mode (no east/west move), with side-based yaw snap assist only.
-    private static final boolean SNAP_TO_SCORING_BIN = true;
+    private static final boolean SNAP_TO_SCORING_BIN = false;
 
     private IntakeController intakeController;
     private ShooterController shooterController;
@@ -60,8 +59,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     // Light helper for driver-facing state feedback.
     private LightIndicator lightIndicator;
     private LightIndicator.LightColor placementLightColor;
-
+    /////**************change only this*********////
     private int placementProfile = RED_1;
+    /////**************change only this*********////
     private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
     private boolean snapRecoveryMoveEast;
     private boolean snapRecoveryMoveTargetInitialized;
@@ -75,41 +75,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         TURN_FINAL
     }
 
-    /*
-     * What this method does:
-     * - Uses camera numbers to move left/right until the AprilTag is centered.
-     *
-     * Values it reads:
-     * - aprilTagWebcam.percent_value: how "good"/complete the detection is.
-     *   Smaller than 100 here means we still need to adjust position.
-     * - aprilTagWebcam.x_value: horizontal error from center.
-     *   < 0 means tag appears left, > 0 means tag appears right, 0 means centered.
-     *
-     * Parameters passed to driveFieldRelative(forward, strafe, turn):
-     * - forward = 0.0 (do not move forward/back)
-     * - strafe  = +/-0.2 (slide left/right slowly)
-     * - turn    = 0.0 (do not rotate)
-     *
-     * Outcome:
-     * - Robot nudges sideways to line the tag up in camera view.
-     */
-    public void snap_to_tag() {
-        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
-
-        if (!snapTelemetry.hasCluster || snapTelemetry.percentClusterFound >= SNAP_CLUSTER_LOCK_PERCENT) {
-            // Stop early once cluster confidence is good enough, rather than forcing x close to 0.
-            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
-            return;
-        }
-
-        if (aprilTagWebcam.x_value < 0) {
-            snapMecanumMover.driveFieldRelative(0.0, -SNAP_STRAFE_POWER, 0.0); // Tag appears left: strafe left.
-        } else if (aprilTagWebcam.x_value > 0) {
-            snapMecanumMover.driveFieldRelative(0.0, SNAP_STRAFE_POWER, 0.0); // Tag appears right: strafe right.
-        } else {
-            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0); // Already centered enough this cycle.
-        }
-    }
+    private SnapToAprilTagHelper snapToAprilTagHelper;
 
     private boolean isPlacementColorMatch(String clusterName) {
         if (clusterName == null) {
@@ -196,10 +162,10 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         }
 
         if (snapRecoveryPhase == SnapRecoveryPhase.SNAP_ALIGN) {
-            snap_to_tag();
-
             AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
-            if (!snapTelemetry.hasCluster || snapTelemetry.percentClusterFound >= SNAP_CLUSTER_LOCK_PERCENT) {
+            snapToAprilTagHelper.apply(snapMecanumMover, snapTelemetry);
+
+            if (!snapTelemetry.hasCluster || snapToAprilTagHelper.isSnapSuccessful(snapTelemetry)) {
                 if (snapRecoveryMoveEast) {
                     snapMecanumMover.snapTurnRightTriggerShortcut();
                 } else {
@@ -249,7 +215,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
         // In legacy mode, strafe alignment is used only on scoring-side target clusters.
         if (isScoringSideCluster(snapTelemetry.clusterName)) {
-            snap_to_tag();
+            snapToAprilTagHelper.apply(snapMecanumMover, snapTelemetry);
         } else {
             snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
         }
@@ -348,6 +314,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         // Start camera/AprilTag system and pass in which tag we want to track.
         aprilTagWebcam = new AprilTagWebcam();
         aprilTagWebcam.init(hardwareMap, telemetry, robotPlacement.target_tag_1, robotPlacement.target_tag_2);
+        snapToAprilTagHelper = new SnapToAprilTagHelper();
 
         intakeController = new IntakeController();
         intakeController.init(hardwareMap);
@@ -417,8 +384,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
             runSnapRecoveryRoutine();
             telemetry.addData("Snap recovery", snapRecoveryPhase.name());
         } else if (driver_snapping) {
+            AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
             if (SNAP_TO_SCORING_BIN) {
-                snap_to_tag(); // Extra  correction only when snap mode is requested and tag is detected.
+                snapToAprilTagHelper.apply(snapMecanumMover, snapTelemetry);
             } else {
                 runLegacySnapMode(snapRequestEdge);
             }
