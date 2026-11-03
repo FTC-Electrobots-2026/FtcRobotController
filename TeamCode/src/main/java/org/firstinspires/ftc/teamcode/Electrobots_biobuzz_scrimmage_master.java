@@ -58,7 +58,6 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
     // Light helper for driver-facing state feedback.
     private LightIndicator lightIndicator;
-    private LightIndicator.LightColor placementLightColor;
     /////**************change only this*********////
     private int placementProfile = RED_1;
     /////**************change only this*********////
@@ -189,6 +188,25 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
     private boolean isAudienceSideCluster(String clusterName) {
         return clusterName != null && clusterName.contains("AUDIENCE");
+    }
+
+    /**
+     * Snap light policy:
+     * - Target out of frame or wrong color target: light OFF
+     * - Right color + non-scoring side: RED
+     * - Right color + scoring side: WHITE
+     */
+    private void applySnapToTagLight(AprilTagWebcam.SnapTelemetry snapTelemetry) {
+        if (snapTelemetry == null || !snapTelemetry.hasCluster || !isPlacementColorMatch(snapTelemetry.clusterName)) {
+            lightIndicator.state(false);
+            return;
+        }
+
+        if (isScoringSideCluster(snapTelemetry.clusterName)) {
+            lightIndicator.state(true, LightIndicator.WHITE);
+        } else {
+            lightIndicator.state(true, LightIndicator.RED);
+        }
     }
 
     private void runLegacySnapMode(boolean snapRequestEdge) {
@@ -331,11 +349,8 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         lightIndicator = new LightIndicator();
         lightIndicator.init(hardwareMap);
 
-        placementLightColor =
-                (placementProfile == RED_1 || placementProfile == RED_2)
-                        ? LightIndicator.RED
-                        : LightIndicator.BLUE;
-        lightIndicator.state(true, placementLightColor); // Turn on using placement profile color.
+        // Keep startup light off; snap/shooter logic will command explicit states.
+        lightIndicator.state(false);
 
         intakeRoutineActive = false;
         shooterRoutineActive = false;
@@ -360,6 +375,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         boolean driver_snapping = driverSnappingRequested && aprilTagWebcam.hasActiveTags();
         boolean snapRequestEdge = driverSnappingRequested && !previousSnapRequest;
         previousSnapRequest = driverSnappingRequested;
+        if (driverSnappingRequested) {
+            applySnapToTagLight(aprilTagWebcam.getSnapTelemetry());
+        }
         //telemetry.addData("tag detected value:", tagDetected);
 
         if (!SNAP_TO_SCORING_BIN && snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
@@ -425,9 +443,11 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
             shooterRoutineActive = true;
 
             if (shooterRequested) {
-                lightIndicator.state(true, shooterController.isReady() ? LightIndicator.GREEN : placementLightColor);
-            } else {
-                lightIndicator.state(true, placementLightColor);
+                if (!driverSnappingRequested) {
+                    lightIndicator.state(true, shooterController.isReady() ? LightIndicator.GREEN : LightIndicator.RED);
+                }
+            } else if (!driverSnappingRequested) {
+                lightIndicator.state(false);
             }
 
             if (shooterRequested) {
@@ -451,7 +471,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         } else if (shooterRoutineActive) {
             shooterController.stop();
             shooterRoutineActive = false;
-            lightIndicator.state(true, placementLightColor);
+            if (!driverSnappingRequested) {
+                lightIndicator.state(false);
+            }
         }
 
         telemetry.update();
