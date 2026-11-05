@@ -8,7 +8,6 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.IMU;
 import org.firstinspires.ftc.teamcode.navigate.AprilTagWebcam;
 import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
-import org.firstinspires.ftc.teamcode.navigate.MecanumWheelMotorOdometry;
 import org.firstinspires.ftc.teamcode.navigate.SnapToAprilTagHelper;
 
 import org.firstinspires.ftc.teamcode.drivesupport.Robot_Placement;
@@ -21,6 +20,18 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 @TeleOp(name = "Teleop-Scrimmage_v1", group = "Scrimmage")
 
 public class Electrobots_biobuzz_scrimmage_master extends OpMode {
+    private static boolean preserveFieldNorthFromAuto;
+
+    public static void markFieldNorthFromAuto() {
+        preserveFieldNorthFromAuto = true;
+    }
+
+    private static boolean consumeFieldNorthLatch() {
+        boolean preserve = preserveFieldNorthFromAuto;
+        preserveFieldNorthFromAuto = false;
+        return preserve;
+    }
+
     // Four drive motors for a mecanum drivetrain.
     DcMotor frontLeftDrive;
     DcMotor frontRightDrive;
@@ -44,9 +55,6 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     private static final int BLUE_1 = 3;
     private static final int BLUE_2 = 4;
 
-    private static final double SNAP_EAST_SHIFT_ROTATIONS = 1.5;
-    private static final double SNAP_WEST_SHIFT_ROTATIONS = 1.5;
-
     // true: run full scoring-bin recovery flow (turn + lateral move + re-snap).
     // false: legacy mode (no east/west move), with side-based yaw snap assist only.
     private static final boolean SNAP_TO_SCORING_BIN = false;
@@ -61,134 +69,10 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     /////**************change only this*********////
     private int placementProfile = BLUE_1;
     /////**************change only this*********////
-    private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
-    private boolean snapRecoveryMoveEast;
-    private boolean snapRecoveryMoveTargetInitialized;
     private boolean previousSnapRequest;
-
-    private enum SnapRecoveryPhase {
-        IDLE,
-        TURN_INITIAL,
-        MOVE_LATERAL,
-        SNAP_ALIGN,
-        TURN_FINAL
-    }
 
     private SnapToAprilTagHelper snapToAprilTagHelper;
 
-    private boolean isPlacementColorMatch(String clusterName) {
-        if (clusterName == null) {
-            return false;
-        }
-
-        if (placementProfile == RED_1 || placementProfile == RED_2) {
-            return clusterName.startsWith("RED");
-        }
-
-        if (placementProfile == BLUE_1 || placementProfile == BLUE_2) {
-            return clusterName.startsWith("BLUE");
-        }
-
-        return false;
-    }
-
-    private boolean shouldStartSnapRecovery(boolean snapRequested) {
-        if (!SNAP_TO_SCORING_BIN) {
-            return false;
-        }
-
-        if (!snapRequested || snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
-            return false;
-        }
-
-        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
-        if (!snapTelemetry.hasCluster) {
-            return false;
-        }
-
-        // "Non scoring / tipped down" means the cluster is upside-down by roll test.
-        boolean nonScoringTippedDown = Math.abs(snapTelemetry.rollDegrees) >= 90.0;
-        if (!nonScoringTippedDown) {
-            return false;
-        }
-
-        return isPlacementColorMatch(snapTelemetry.clusterName);
-    }
-
-    private void startSnapRecovery() {
-        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
-        boolean audienceSide = snapTelemetry.clusterName != null && snapTelemetry.clusterName.contains("AUDIENCE");
-
-        // If the non-scoring tag is audience side => left trigger + west shift.
-        // Else => right trigger + east shift.
-        snapRecoveryMoveEast = !audienceSide;
-        snapRecoveryMoveTargetInitialized = false;
-
-        if (snapRecoveryMoveEast) {
-            snapMecanumMover.snapTurnRightTriggerShortcut();
-        } else {
-            snapMecanumMover.snapTurnLeftTriggerShortcut();
-        }
-
-        snapRecoveryPhase = SnapRecoveryPhase.TURN_INITIAL;
-    }
-
-    private void runSnapRecoveryRoutine() {
-        if (snapRecoveryPhase == SnapRecoveryPhase.TURN_INITIAL) {
-            if (snapMecanumMover.stepSnapTurn(telemetry)) {
-                snapRecoveryPhase = SnapRecoveryPhase.MOVE_LATERAL;
-                snapRecoveryMoveTargetInitialized = false;
-            }
-            return;
-        }
-
-        if (snapRecoveryPhase == SnapRecoveryPhase.MOVE_LATERAL) {
-            if (!snapRecoveryMoveTargetInitialized) {
-                MecanumWheelMotorOdometry.Pose2d pose = snapMecanumMover.getOdometry().getPose();
-                double shiftInches = (snapRecoveryMoveEast ? SNAP_EAST_SHIFT_ROTATIONS : SNAP_WEST_SHIFT_ROTATIONS)
-                        * MecanumWheelMotorOdometry.WHEEL_CIRCUMFERENCE_INCHES;
-                double targetX = pose.xInches + (snapRecoveryMoveEast ? shiftInches : -shiftInches);
-
-                snapMecanumMover.setTargetPose(targetX, pose.yInches, pose.headingRadians);
-                snapRecoveryMoveTargetInitialized = true;
-            }
-
-            if (snapMecanumMover.navigateToTarget()) {
-                snapMecanumMover.cancelTarget();
-                snapRecoveryPhase = SnapRecoveryPhase.SNAP_ALIGN;
-            }
-            return;
-        }
-
-        if (snapRecoveryPhase == SnapRecoveryPhase.SNAP_ALIGN) {
-            AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
-            snapToAprilTagHelper.apply(snapMecanumMover, snapTelemetry);
-
-            if (!snapTelemetry.hasCluster || snapToAprilTagHelper.isSnapSuccessful(snapTelemetry)) {
-                if (snapRecoveryMoveEast) {
-                    snapMecanumMover.snapTurnRightTriggerShortcut();
-                } else {
-                    snapMecanumMover.snapTurnLeftTriggerShortcut();
-                }
-                snapRecoveryPhase = SnapRecoveryPhase.TURN_FINAL;
-            }
-            return;
-        }
-
-        if (snapRecoveryPhase == SnapRecoveryPhase.TURN_FINAL) {
-            if (snapMecanumMover.stepSnapTurn(telemetry)) {
-                snapRecoveryPhase = SnapRecoveryPhase.IDLE;
-            }
-        }
-    }
-
-    private boolean isScoringSideCluster(String clusterName) {
-        return clusterName != null && clusterName.contains("SCORING");
-    }
-
-    private boolean isAudienceSideCluster(String clusterName) {
-        return clusterName != null && clusterName.contains("AUDIENCE");
-    }
 
     /**
      * Snap light policy:
@@ -197,45 +81,17 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
      * - Intended target visible on scoring side: GREEN
      */
     private void applySnapToTagLight(AprilTagWebcam.SnapTelemetry snapTelemetry) {
-        if (snapTelemetry == null || !snapTelemetry.hasCluster || !isPlacementColorMatch(snapTelemetry.clusterName)) {
+        if (snapTelemetry == null
+                || !snapTelemetry.hasCluster
+                || !snapToAprilTagHelper.isPlacementColorMatch(placementProfile, snapTelemetry.clusterName)) {
             lightIndicator.state(false);
             return;
         }
 
-        if (isScoringSideCluster(snapTelemetry.clusterName)) {
+        if (snapToAprilTagHelper.isScoringSideCluster(snapTelemetry.clusterName)) {
             lightIndicator.state(true, LightIndicator.GREEN);
         } else {
             lightIndicator.state(true, LightIndicator.BLUE);
-        }
-    }
-
-    private void runLegacySnapMode(boolean snapRequestEdge) {
-        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
-        if (!snapTelemetry.hasCluster || !isPlacementColorMatch(snapTelemetry.clusterName)) {
-            return;
-        }
-
-        // Legacy mode yaw assist:
-        // - scoring side => left trigger snap target
-        // - audience side => right trigger snap target
-        if (snapRequestEdge && !snapMecanumMover.isSnapTurnActive()) {
-            if (isScoringSideCluster(snapTelemetry.clusterName)) {
-                snapMecanumMover.snapTurnLeftTriggerShortcut();
-            } else if (isAudienceSideCluster(snapTelemetry.clusterName)) {
-                snapMecanumMover.snapTurnRightTriggerShortcut();
-            }
-        }
-
-        if (snapMecanumMover.isSnapTurnActive()) {
-            snapMecanumMover.stepSnapTurn(telemetry);
-            return;
-        }
-
-        // In legacy mode, strafe alignment is used only on scoring-side target clusters.
-        if (isScoringSideCluster(snapTelemetry.clusterName)) {
-            snapToAprilTagHelper.apply(snapMecanumMover, snapTelemetry);
-        } else {
-            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
         }
     }
 
@@ -356,6 +212,15 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         shooterRoutineActive = false;
     }
 
+    @Override
+    public void start() {
+        boolean keepAutoFieldNorth = consumeFieldNorthLatch();
+        if (!keepAutoFieldNorth) {
+            // Direct teleop entry: define field north from current heading.
+            imu.resetYaw();
+        }
+    }
+
     /*
      * FTC calls loop() over and over while the OpMode is running.
      *
@@ -368,6 +233,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     @Override
     public void loop() {
         aprilTagWebcam.updateDetections();
+        AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
         // Force baseline OFF each cycle; later logic enables only allowed states.
         lightIndicator.state(false);
         boolean keepFlywheelReadyLight = false;
@@ -380,33 +246,41 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         previousSnapRequest = driverSnappingRequested;
         //telemetry.addData("tag detected value:", tagDetected);
 
-        if (!SNAP_TO_SCORING_BIN && snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
+        if (!SNAP_TO_SCORING_BIN && snapToAprilTagHelper.isRecoveryActive()) {
             // Safety: if mode is switched to legacy behavior, stop any in-progress lateral recovery.
-            snapMecanumMover.cancelTarget();
-            snapRecoveryPhase = SnapRecoveryPhase.IDLE;
-            snapRecoveryMoveTargetInitialized = false;
+            snapToAprilTagHelper.resetRecovery(snapMecanumMover);
         }
 
-        if (shouldStartSnapRecovery(driverSnappingRequested)) {
-            startSnapRecovery();
+        if (snapToAprilTagHelper.shouldStartRecovery(
+                SNAP_TO_SCORING_BIN,
+                driverSnappingRequested,
+                placementProfile,
+                snapTelemetry
+        )) {
+            snapToAprilTagHelper.startRecovery(snapMecanumMover, snapTelemetry);
         }
 
         // Passes both controllers and telemetry into the drive helper.
         // Last parameter tells helper whether auto-snap mode is active.
         // Pass A / A.1 refactor note: call contract is intentionally unchanged.
         boolean legacyYawSnapActive = !SNAP_TO_SCORING_BIN && snapMecanumMover.isSnapTurnActive();
-        boolean snapRoutineActive = driver_snapping || snapRecoveryPhase != SnapRecoveryPhase.IDLE || legacyYawSnapActive;
+        boolean snapRoutineActive = driver_snapping || snapToAprilTagHelper.isRecoveryActive() || legacyYawSnapActive;
         snapMecanumMover.loop(gamepad1, gamepad2, telemetry, snapRoutineActive);
 
-        if (SNAP_TO_SCORING_BIN && snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
-            runSnapRecoveryRoutine();
-            telemetry.addData("Snap recovery", snapRecoveryPhase.name());
+        if (SNAP_TO_SCORING_BIN && snapToAprilTagHelper.isRecoveryActive()) {
+            snapToAprilTagHelper.runRecoveryRoutine(snapMecanumMover, snapTelemetry, telemetry);
+            telemetry.addData("Snap recovery", snapToAprilTagHelper.getRecoveryPhaseName());
         } else if (driver_snapping) {
-            AprilTagWebcam.SnapTelemetry snapTelemetry = aprilTagWebcam.getSnapTelemetry();
             if (SNAP_TO_SCORING_BIN) {
                 snapToAprilTagHelper.apply(snapMecanumMover, snapTelemetry);
             } else {
-                runLegacySnapMode(snapRequestEdge);
+                snapToAprilTagHelper.runLegacySnapMode(
+                        snapMecanumMover,
+                        telemetry,
+                        snapTelemetry,
+                        snapRequestEdge,
+                        placementProfile
+                );
             }
             addSnapToTagTelemetry();
         } else if (!SNAP_TO_SCORING_BIN && snapMecanumMover.isSnapTurnActive()) {
