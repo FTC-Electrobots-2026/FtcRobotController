@@ -216,7 +216,7 @@ public class SnapMecanumMover {
         updateDriveSpeedScale(gamepad1);
         double rotateCommand = resolveRotateCommand(gamepad1, telemetry);
 
-        telemetry.addData("Drive speed scale", "%.2f", driveSpeedScale);
+        //telemetry.addData("Drive speed scale", "%.2f", driveSpeedScale);
         //telemetry.addData("Heading (deg)", Math.toDegrees(getCurrentHeadingRadians()));
         //telemetry.addData("Snap turn", snapTurnActive ? "ACTIVE" : "OFF");
         /*
