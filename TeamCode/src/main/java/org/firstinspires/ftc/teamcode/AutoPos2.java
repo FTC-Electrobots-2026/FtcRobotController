@@ -7,15 +7,19 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import org.firstinspires.ftc.teamcode.auto.AutoRunner;
 import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
+import org.firstinspires.ftc.teamcode.navigate.MecanumWheelMotorOdometry;
 import org.firstinspires.ftc.teamcode.scoring.IntakeController;
 import org.firstinspires.ftc.teamcode.scoring.ShooterController;
 
 /**
  * AutoPos2 sequence:
- * 1) Execute right-trigger snap turn and wait for completion.
- * 2) Spin flywheel to target speed and wait until ready.
- * 3) Run windmill feed routine 8 times.
+ * 1) Move left 0.25 rotations.
+ * 2) Execute right-trigger snap turn and wait for completion.
+ * 3) Move right 0.25 rotations.
+ * 4) Spin flywheel to target speed and wait until ready.
+ * 5) Run windmill feed routine 8 times.
  *
  * Uses existing routines/controllers only.
  */
@@ -23,10 +27,13 @@ import org.firstinspires.ftc.teamcode.scoring.ShooterController;
 public class AutoPos2 extends LinearOpMode {
 
     private static final double SNAP_TURN_TIMEOUT_SECONDS = 5.0;
+    private static final double PRE_TURN_MOVE_TIMEOUT_SECONDS = 3.0;
     private static final double SHOOTER_SPINUP_TIMEOUT_SECONDS = 4.0;
+    private static final double SHOOTER_SETTLE_BEFORE_WINDMILL_SECONDS = 1.0;
     private static final double WINDMILL_ON_SECONDS = 0.35;
     private static final double WINDMILL_OFF_SECONDS = 0.15;
     private static final int WINDMILL_CYCLES = 8;
+    private static final double POST_WINDMILL_MOVE_TIMEOUT_SECONDS = 7.0;
 
     @Override
     public void runOpMode() {
@@ -83,7 +90,29 @@ public class AutoPos2 extends LinearOpMode {
             return;
         }
 
-        // 1) Same behavior as driver right-trigger snap turn, then wait until it settles.
+        // 1) Move left 0.25 rotations before starting snap turn.
+        AutoRunner preTurnMove = new AutoRunner(snapMecanumMover)
+                .MoveLeft(0.25);
+
+        ElapsedTime preTurnTimer = new ElapsedTime();
+        preTurnTimer.reset();
+        while (opModeIsActive() && !isStopRequested() && preTurnTimer.seconds() <= PRE_TURN_MOVE_TIMEOUT_SECONDS) {
+            boolean done = preTurnMove.update();
+
+            telemetry.addData("Step", "Pre-turn move left 0.25");
+            telemetry.addData("Done", done ? "YES" : "NO");
+            telemetry.addData("Pending", preTurnMove.getPendingCommandCount());
+            telemetry.addData("Time", "%.1f / %.1f", preTurnTimer.seconds(), PRE_TURN_MOVE_TIMEOUT_SECONDS);
+            telemetry.update();
+
+            if (done) {
+                break;
+            }
+            idle();
+        }
+        preTurnMove.clear();
+
+        // 2) Same behavior as driver right-trigger snap turn, then wait until it settles.
         snapMecanumMover.snapTurnRightTriggerShortcut();
         ElapsedTime snapTimer = new ElapsedTime();
         snapTimer.reset();
@@ -101,7 +130,29 @@ public class AutoPos2 extends LinearOpMode {
             idle();
         }
 
-        // 2) Spin flywheel with existing closed-loop controller until ready (or timeout).
+        // 3) After turn, move right 0.25 rotations before flywheel spin-up.
+        AutoRunner postTurnMove = new AutoRunner(snapMecanumMover)
+                .MoveRight(0.25);
+
+        ElapsedTime postTurnTimer = new ElapsedTime();
+        postTurnTimer.reset();
+        while (opModeIsActive() && !isStopRequested() && postTurnTimer.seconds() <= PRE_TURN_MOVE_TIMEOUT_SECONDS) {
+            boolean done = postTurnMove.update();
+
+            telemetry.addData("Step", "Post-turn move right 0.25");
+            telemetry.addData("Done", done ? "YES" : "NO");
+            telemetry.addData("Pending", postTurnMove.getPendingCommandCount());
+            telemetry.addData("Time", "%.1f / %.1f", postTurnTimer.seconds(), PRE_TURN_MOVE_TIMEOUT_SECONDS);
+            telemetry.update();
+
+            if (done) {
+                break;
+            }
+            idle();
+        }
+        postTurnMove.clear();
+
+        // 4) Spin flywheel with existing closed-loop controller until ready (or timeout).
         ElapsedTime spinupTimer = new ElapsedTime();
         spinupTimer.reset();
         while (opModeIsActive() && !isStopRequested() && spinupTimer.seconds() <= SHOOTER_SPINUP_TIMEOUT_SECONDS) {
@@ -121,7 +172,22 @@ public class AutoPos2 extends LinearOpMode {
             idle();
         }
 
-        // 3) Run the windmill routine 8 times using existing intake/shooter control methods.
+        // Keep flywheel under closed-loop control for 1 second before feeding.
+        ElapsedTime settleTimer = new ElapsedTime();
+        settleTimer.reset();
+        while (opModeIsActive() && !isStopRequested() && settleTimer.seconds() <= SHOOTER_SETTLE_BEFORE_WINDMILL_SECONDS) {
+            shooterController.applyShooterSpeedControl(true, 0.0);
+            intakeController.applyIntakeAndWindmillControl(false, false, false);
+
+            telemetry.addData("Step", "Flywheel settle");
+            telemetry.addData("RPM", "%.1f", shooterController.getLastRpm());
+            telemetry.addData("Target RPM", "%.1f", shooterController.getTargetRpm());
+            telemetry.addData("Time", "%.1f / %.1f", settleTimer.seconds(), SHOOTER_SETTLE_BEFORE_WINDMILL_SECONDS);
+            telemetry.update();
+            idle();
+        }
+
+        // 5) Run the windmill routine 8 times using existing intake/shooter control methods.
         for (int cycle = 1; cycle <= WINDMILL_CYCLES && opModeIsActive() && !isStopRequested(); cycle++) {
             ElapsedTime onTimer = new ElapsedTime();
             onTimer.reset();
@@ -149,6 +215,34 @@ public class AutoPos2 extends LinearOpMode {
                 idle();
             }
         }
+
+        // 6) After windmill cycles, move backward by 2.5 wheel rotations using existing auto command flow.
+        AutoRunner autoRunner = new AutoRunner(snapMecanumMover)
+                .MoveBackward(2.5);
+
+        ElapsedTime moveTimer = new ElapsedTime();
+        moveTimer.reset();
+        while (opModeIsActive() && !isStopRequested() && moveTimer.seconds() <= POST_WINDMILL_MOVE_TIMEOUT_SECONDS) {
+            shooterController.applyShooterSpeedControl(true, 0.0);
+            intakeController.applyIntakeAndWindmillControl(false, false, false);
+
+            boolean done = autoRunner.update();
+            MecanumWheelMotorOdometry.Pose2d pose = snapMecanumMover.getOdometry().getPose();
+
+            telemetry.addData("Step", "Move back 2.5 rotations");
+            telemetry.addData("Done", done ? "YES" : "NO");
+            telemetry.addData("Pending", autoRunner.getPendingCommandCount());
+            telemetry.addData("Pose", "x=%.1f y=%.1f h=%.1f", pose.xInches, pose.yInches, Math.toDegrees(pose.headingRadians));
+            telemetry.addData("Time", "%.1f / %.1f", moveTimer.seconds(), POST_WINDMILL_MOVE_TIMEOUT_SECONDS);
+            telemetry.update();
+
+            if (done) {
+                break;
+            }
+            idle();
+        }
+
+        autoRunner.clear();
 
         intakeController.stop();
         shooterController.stop();
