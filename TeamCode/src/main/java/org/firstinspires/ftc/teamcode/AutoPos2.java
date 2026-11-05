@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode;
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -32,8 +33,9 @@ public class AutoPos2 extends LinearOpMode {
     private static final double SHOOTER_SETTLE_BEFORE_WINDMILL_SECONDS = 1.0;
     private static final double WINDMILL_ON_SECONDS = 0.35;
     private static final double WINDMILL_OFF_SECONDS = 0.15;
+    private static final double AUTO_WINDMILL_POWER = 0.6;
     private static final int WINDMILL_CYCLES = 8;
-    private static final double POST_WINDMILL_MOVE_TIMEOUT_SECONDS = 7.0;
+    private static final double POST_WINDMILL_MOVE_TIMEOUT_SECONDS = 10.0;
 
     @Override
     public void runOpMode() {
@@ -73,6 +75,7 @@ public class AutoPos2 extends LinearOpMode {
 
         IntakeController intakeController = new IntakeController();
         intakeController.init(hardwareMap);
+        CRServo windmillServo = hardwareMap.get(CRServo.class, "windmill_servo");
 
         telemetry.addLine("AutoPos2 ready");
         telemetry.addLine("1) Snap turn right-trigger target");
@@ -92,7 +95,7 @@ public class AutoPos2 extends LinearOpMode {
 
         // 1) Move left 0.25 rotations before starting snap turn.
         AutoRunner preTurnMove = new AutoRunner(snapMecanumMover)
-                .MoveLeft(0.25);
+                .MoveLeft(0.5);
 
         ElapsedTime preTurnTimer = new ElapsedTime();
         preTurnTimer.reset();
@@ -132,7 +135,7 @@ public class AutoPos2 extends LinearOpMode {
 
         // 3) After turn, move right 0.25 rotations before flywheel spin-up.
         AutoRunner postTurnMove = new AutoRunner(snapMecanumMover)
-                .MoveRight(0.25);
+                .MoveRight(0.5);
 
         ElapsedTime postTurnTimer = new ElapsedTime();
         postTurnTimer.reset();
@@ -193,7 +196,9 @@ public class AutoPos2 extends LinearOpMode {
             onTimer.reset();
             while (opModeIsActive() && !isStopRequested() && onTimer.seconds() <= WINDMILL_ON_SECONDS) {
                 shooterController.applyShooterSpeedControl(true, 0.0);
-                intakeController.applyIntakeAndWindmillControl(false, false, true);
+                intakeController.applyIntakeAndWindmillControl(false, false, false);
+                // Auto-only override: run windmill slower than normal TeleOp/scoring config.
+                windmillServo.setPower(-AUTO_WINDMILL_POWER);
 
                 telemetry.addData("Step", "Windmill ON");
                 telemetry.addData("Cycle", "%d / %d", cycle, WINDMILL_CYCLES);
@@ -207,6 +212,7 @@ public class AutoPos2 extends LinearOpMode {
             while (opModeIsActive() && !isStopRequested() && offTimer.seconds() <= WINDMILL_OFF_SECONDS) {
                 shooterController.applyShooterSpeedControl(true, 0.0);
                 intakeController.applyIntakeAndWindmillControl(false, false, false);
+                windmillServo.setPower(0.0);
 
                 telemetry.addData("Step", "Windmill OFF");
                 telemetry.addData("Cycle", "%d / %d", cycle, WINDMILL_CYCLES);
@@ -218,7 +224,10 @@ public class AutoPos2 extends LinearOpMode {
 
         // 6) After windmill cycles, move backward by 2.5 wheel rotations using existing auto command flow.
         AutoRunner autoRunner = new AutoRunner(snapMecanumMover)
-                .MoveBackward(2.5);
+                .MoveBackward(3.4)
+                .MoveLeft(6.0)
+                .MoveLeft(6.0);
+
 
         ElapsedTime moveTimer = new ElapsedTime();
         moveTimer.reset();
@@ -243,6 +252,7 @@ public class AutoPos2 extends LinearOpMode {
         }
 
         autoRunner.clear();
+        windmillServo.setPower(0.0);
 
         intakeController.stop();
         shooterController.stop();

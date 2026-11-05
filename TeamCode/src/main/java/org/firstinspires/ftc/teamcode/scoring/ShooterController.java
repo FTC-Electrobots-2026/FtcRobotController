@@ -62,7 +62,7 @@ public class ShooterController {
         boolean leftBumper = gamepad2.left_bumper;
 
         if (dpadUp && !prevDpadUp) {
-            shooterTargetRpm = Math.min(ScoringConfig.SHOOTER_MAX_RPM, shooterTargetRpm + ScoringConfig.SHOOTER_STEP_RPM);
+            shooterTargetRpm = Math.min(ScoringConfig.SHOOTER_EFFECTIVE_MAX_RPM, shooterTargetRpm + ScoringConfig.SHOOTER_STEP_RPM);
             resetPid();
         }
 
@@ -102,7 +102,7 @@ public class ShooterController {
             double effectiveTargetRpm = Range.clip(
                     shooterTargetRpm + transientRpmAdjust,
                     ScoringConfig.SHOOTER_MIN_RPM,
-                    ScoringConfig.SHOOTER_MAX_RPM
+                    ScoringConfig.SHOOTER_EFFECTIVE_MAX_RPM
             );
             lastPower = computeShooterPidPower(effectiveTargetRpm, lastRpm);
             shooterMotor.setPower(lastPower);

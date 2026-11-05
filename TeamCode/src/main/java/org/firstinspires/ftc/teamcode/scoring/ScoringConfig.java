@@ -20,6 +20,7 @@ public final class ScoringConfig {
     public static final double SHOOTER_STEP_RPM = 100.0;
     public static final double SHOOTER_MIN_RPM = 0.0;
     public static final double SHOOTER_MAX_RPM = 5600.0;
+    public static final double SHOOTER_EFFECTIVE_MAX_RPM = SHOOTER_MAX_RPM - 200.0;
     public static final double SHOOTER_RPM_TOLERANCE = 100.0;
     public static final double SHOOTER_TICKS_PER_REV = 28.0;
 }
