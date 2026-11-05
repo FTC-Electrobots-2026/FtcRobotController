@@ -24,12 +24,14 @@ package org.firstinspires.ftc.teamcode;
 
 import static com.qualcomm.robotcore.hardware.DcMotor.ZeroPowerBehavior.BRAKE;
 
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
 /*
@@ -61,6 +63,19 @@ public class BioBuzzStarterbotTeleopMecanum extends OpMode {
     private CRServo leftIntakeServo = null;
     private CRServo rightIntakeServo = null;
     private CRServo windmillServo = null;
+    private IMU imu = null;
+
+    private static boolean preserveFieldNorthFromAuto = false;
+
+    public static void markFieldNorthFromAuto() {
+        preserveFieldNorthFromAuto = true;
+    }
+
+    private static boolean consumeFieldNorthLatch() {
+        boolean preserve = preserveFieldNorthFromAuto;
+        preserveFieldNorthFromAuto = false;
+        return preserve;
+    }
 
 
     /*
@@ -107,6 +122,7 @@ public class BioBuzzStarterbotTeleopMecanum extends OpMode {
         rightBackDrive = hardwareMap.get(DcMotor.class, "right_back_drive");
         intake = hardwareMap.get(DcMotor.class, "intake");
         launcher = hardwareMap.get(DcMotorEx.class, "launcher");
+        imu = hardwareMap.get(IMU.class, "imu");
         windmillServo = hardwareMap.get(CRServo.class, "windmillServo");
         leftIntakeServo = hardwareMap.get(CRServo.class, "left_intake_servo");
         rightIntakeServo = hardwareMap.get(CRServo.class, "right_intake_servo");
@@ -178,6 +194,18 @@ public class BioBuzzStarterbotTeleopMecanum extends OpMode {
      */
     @Override
     public void start() {
+        boolean keepAutoFieldNorth = consumeFieldNorthLatch();
+
+        if (!keepAutoFieldNorth) {
+            // Direct teleop entry: define field north from current heading.
+            RevHubOrientationOnRobot.LogoFacingDirection logoDirection =
+                    RevHubOrientationOnRobot.LogoFacingDirection.RIGHT;
+            RevHubOrientationOnRobot.UsbFacingDirection usbDirection =
+                    RevHubOrientationOnRobot.UsbFacingDirection.BACKWARD;
+            RevHubOrientationOnRobot orientationOnRobot = new RevHubOrientationOnRobot(logoDirection, usbDirection);
+            imu.initialize(new IMU.Parameters(orientationOnRobot));
+            imu.resetYaw();
+        }
     }
 
     /*

@@ -24,7 +24,7 @@ import org.firstinspires.ftc.teamcode.scoring.ShooterController;
  *
  * Uses existing routines/controllers only.
  */
-@Autonomous(name = "AutoPos2", group = "Robot")
+@Autonomous(name = "AutoPos2", group = "Robot", preselectTeleOp = "Teleop-Scrimmage_v1")
 public class AutoPos2 extends LinearOpMode {
 
     private static final double SNAP_TURN_TIMEOUT_SECONDS = 5.0;
@@ -92,6 +92,10 @@ public class AutoPos2 extends LinearOpMode {
             snapMecanumMover.cancelTarget();
             return;
         }
+
+        // Define field north at autonomous start and preserve it for auto->teleop flow.
+        imu.resetYaw();
+        Electrobots_biobuzz_scrimmage_master.markFieldNorthFromAuto();
 
         // 1) Move left 0.25 rotations before starting snap turn.
         AutoRunner preTurnMove = new AutoRunner(snapMecanumMover)

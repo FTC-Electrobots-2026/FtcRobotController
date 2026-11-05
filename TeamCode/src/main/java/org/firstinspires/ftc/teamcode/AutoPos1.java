@@ -17,7 +17,7 @@ import org.firstinspires.ftc.teamcode.navigate.SnapMecanumMover;
  *
  * Uses existing AutoRunner + SnapMecanumMover libraries without rewriting drive logic.
  */
-@Autonomous(name = "AutoPos1", group = "Robot")
+@Autonomous(name = "AutoPos1", group = "Robot", preselectTeleOp = "Teleop-Scrimmage_v1")
 public class AutoPos1 extends LinearOpMode {
 
     private static final double AUTO_TIMEOUT_SECONDS = 20.0;
@@ -57,6 +57,10 @@ public class AutoPos1 extends LinearOpMode {
             stopRobotMotion();
             return;
         }
+
+        // Define field north at autonomous start and preserve it for auto->teleop flow.
+        imu.resetYaw();
+        Electrobots_biobuzz_scrimmage_master.markFieldNorthFromAuto();
 
         long startNanos = System.nanoTime();
 
