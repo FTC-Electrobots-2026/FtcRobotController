@@ -59,7 +59,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     // Light helper for driver-facing state feedback.
     private LightIndicator lightIndicator;
     /////**************change only this*********////
-    private int placementProfile = RED_1;
+    private int placementProfile = BLUE_1;
     /////**************change only this*********////
     private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
     private boolean snapRecoveryMoveEast;
@@ -193,8 +193,8 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     /**
      * Snap light policy:
      * - Target out of frame or wrong color target: light OFF
-     * - Right color + non-scoring side: RED
-     * - Right color + scoring side: WHITE
+     * - Intended target visible: BLUE
+     * - Intended target visible on scoring side: GREEN
      */
     private void applySnapToTagLight(AprilTagWebcam.SnapTelemetry snapTelemetry) {
         if (snapTelemetry == null || !snapTelemetry.hasCluster || !isPlacementColorMatch(snapTelemetry.clusterName)) {
@@ -203,9 +203,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         }
 
         if (isScoringSideCluster(snapTelemetry.clusterName)) {
-            lightIndicator.state(true, LightIndicator.WHITE);
+            lightIndicator.state(true, LightIndicator.GREEN);
         } else {
-            lightIndicator.state(true, LightIndicator.RED);
+            lightIndicator.state(true, LightIndicator.BLUE);
         }
     }
 
@@ -344,7 +344,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         snapMecanumMover.initializeOdometry();
 
         // Light setup:
-        // - hardware name expected in Robot Config: "ftc_light"
+        // - hardware name expected in Robot Config: "indicator" (legacy "ftc_light" also supported)
         // - placement profile selects default team color
         lightIndicator = new LightIndicator();
         lightIndicator.init(hardwareMap);
@@ -368,6 +368,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     @Override
     public void loop() {
         aprilTagWebcam.updateDetections();
+        // Force baseline OFF each cycle; later logic enables only allowed states.
+        lightIndicator.state(false);
+        boolean keepFlywheelReadyLight = false;
         // Must be true for BOTH conditions:
         // - driver is holding right bumper
         // - camera currently sees any tag
@@ -375,9 +378,6 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         boolean driver_snapping = driverSnappingRequested && aprilTagWebcam.hasActiveTags();
         boolean snapRequestEdge = driverSnappingRequested && !previousSnapRequest;
         previousSnapRequest = driverSnappingRequested;
-        if (driverSnappingRequested) {
-            applySnapToTagLight(aprilTagWebcam.getSnapTelemetry());
-        }
         //telemetry.addData("tag detected value:", tagDetected);
 
         if (!SNAP_TO_SCORING_BIN && snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
@@ -441,14 +441,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
             shooterController.updateTargetRpmFromDriverButtons(gamepad2);
             shooterController.applyShooterSpeedControl(shooterRequested, shooterYawAdjustRpm);
             shooterRoutineActive = true;
-
-            if (shooterRequested) {
-                if (!driverSnappingRequested) {
-                    lightIndicator.state(true, shooterController.isReady() ? LightIndicator.GREEN : LightIndicator.RED);
-                }
-            } else if (!driverSnappingRequested) {
-                lightIndicator.state(false);
-            }
+            keepFlywheelReadyLight = shooterRequested && shooterController.isReady();
 
             if (shooterRequested) {
                 double shooterRpm = shooterController.getLastRpm();
@@ -471,9 +464,14 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         } else if (shooterRoutineActive) {
             shooterController.stop();
             shooterRoutineActive = false;
-            if (!driverSnappingRequested) {
-                lightIndicator.state(false);
-            }
+        }
+
+        if (keepFlywheelReadyLight) {
+            // RPM ready indicator is the only snap-light override.
+            lightIndicator.state(true, LightIndicator.RED);
+        } else {
+            // Default light behavior follows alliance AprilTag state continuously.
+            applySnapToTagLight(aprilTagWebcam.getSnapTelemetry());
         }
 
         telemetry.update();

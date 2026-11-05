@@ -1,14 +1,16 @@
 package org.firstinspires.ftc.teamcode.drivesupport;
 
-import com.qualcomm.hardware.rev.RevBlinkinLedDriver;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.Servo;
 
 /**
- * LightIndicator wraps the FTC light driver so OpModes can control team/status colors
- * with very small, readable method calls.
+ * LightIndicator wraps a servo-based RGB indicator so OpModes can control
+ * team/status colors with very small, readable method calls.
  *
  * Hardware requirement:
- * - Add the light in the Robot Configuration and name it "ftc_light".
+ * - Add the indicator servo in Robot Configuration and name it "
+ * "
+ *   (or "ftc_light" for backward compatibility).
  *
  * Usage examples:
  * - lightIndicator.init(hardwareMap);
@@ -21,7 +23,7 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 public class LightIndicator {
 
     /**
-     * Light output style. STABLE is solid color, PULSE attempts a heartbeat/pulse pattern.
+     * Light output style retained for API compatibility; servo output is stable-only.
      */
     public enum LightMode {
         STABLE,
@@ -31,25 +33,22 @@ public class LightIndicator {
     /**
      * Supported basic colors.
      *
-     * Each color maps to one stable pattern. Pulse is computed at runtime so we can
-     * safely fall back to stable if a specific pulse pattern is unavailable.
+     * Positions map to the RGB indicator's color-select servo values.
      */
     public enum LightColor {
-        RED(RevBlinkinLedDriver.BlinkinPattern.RED, "HEARTBEAT_RED"),
-        BLUE(RevBlinkinLedDriver.BlinkinPattern.BLUE, "HEARTBEAT_BLUE"),
-        GREEN(RevBlinkinLedDriver.BlinkinPattern.GREEN, "HEARTBEAT_GREEN"),
-        YELLOW(RevBlinkinLedDriver.BlinkinPattern.YELLOW, "HEARTBEAT_WHITE"),
-        WHITE(RevBlinkinLedDriver.BlinkinPattern.WHITE, "HEARTBEAT_WHITE"),
-        ORANGE(RevBlinkinLedDriver.BlinkinPattern.ORANGE, "HEARTBEAT_RED"),
-        VIOLET(RevBlinkinLedDriver.BlinkinPattern.VIOLET, "HEARTBEAT_BLUE"),
-        CYAN(RevBlinkinLedDriver.BlinkinPattern.SKY_BLUE, "HEARTBEAT_BLUE");
+        RED(0.280),
+        BLUE(0.611),
+        GREEN(0.500),
+        YELLOW(0.500),
+        WHITE(0.500),
+        ORANGE(0.280),
+        VIOLET(0.611),
+        CYAN(0.611);
 
-        private final RevBlinkinLedDriver.BlinkinPattern stablePattern;
-        private final String preferredPulsePatternName;
+        private final double servoPosition;
 
-        LightColor(RevBlinkinLedDriver.BlinkinPattern stablePattern, String preferredPulsePatternName) {
-            this.stablePattern = stablePattern;
-            this.preferredPulsePatternName = preferredPulsePatternName;
+        LightColor(double servoPosition) {
+            this.servoPosition = servoPosition;
         }
     }
 
@@ -63,16 +62,18 @@ public class LightIndicator {
     public static final LightColor VIOLET = LightColor.VIOLET;
     public static final LightColor CYAN = LightColor.CYAN;
 
-    private static final String DEFAULT_LIGHT_NAME = "ftc_light";
+    private static final String DEFAULT_LIGHT_NAME = "indicator";
+    private static final String LEGACY_LIGHT_NAME = "ftc_light";
+    private static final double OFF_SERVO_POSITION = 0.000;
 
-    private RevBlinkinLedDriver lightDriver;
+    private Servo indicator;
     private boolean initialized;
     private boolean isOn;
     private LightColor lastColor;
     private LightMode lastMode;
 
     /**
-     * Initializes the light from hardware map using the default config name: "ftc_light".
+     * Initializes the light from hardware map using the default config name: "indicator".
      */
     public void init(HardwareMap hardwareMap) {
         init(hardwareMap, DEFAULT_LIGHT_NAME);
@@ -85,12 +86,19 @@ public class LightIndicator {
      * what color/mode to reuse.
      */
     public void init(HardwareMap hardwareMap, String hardwareName) {
-        lightDriver = hardwareMap.get(RevBlinkinLedDriver.class, hardwareName);
+        try {
+            indicator = hardwareMap.get(Servo.class, hardwareName);
+        } catch (IllegalArgumentException missingConfiguredName) {
+            // Keep compatibility with older config name used in this codebase.
+            indicator = hardwareMap.get(Servo.class, LEGACY_LIGHT_NAME);
+        }
+
         initialized = true;
-        isOn = false;
+
         lastColor = RED;
         lastMode = LightMode.STABLE;
-        applyOffPattern();
+        isOn = false;
+        applyOffPosition();
     }
 
     /**
@@ -103,8 +111,8 @@ public class LightIndicator {
     /**
      * Sets color with explicit mode.
      *
-     * If mode is PULSE and that pulse pattern does not exist on this SDK version,
-     * we automatically fall back to the stable color so your OpMode keeps running.
+     * For servo indicators, mode is currently ignored and color is applied as a
+     * stable servo position.
      */
     public void setColor(LightColor color, LightMode mode) {
         ensureInitialized();
@@ -116,7 +124,7 @@ public class LightIndicator {
         lastMode = requestedMode;
 
         if (isOn) {
-            applyPatternFor(lastColor, lastMode);
+            applyColor(lastColor);
         }
     }
 
@@ -131,9 +139,9 @@ public class LightIndicator {
         isOn = on;
 
         if (isOn) {
-            applyPatternFor(lastColor, lastMode);
+            applyColor(lastColor);
         } else {
-            applyOffPattern();
+            applyOffPosition();
         }
     }
 
@@ -176,33 +184,16 @@ public class LightIndicator {
         return isOn;
     }
 
-    private void applyPatternFor(LightColor color, LightMode mode) {
-        if (mode == LightMode.PULSE) {
-            RevBlinkinLedDriver.BlinkinPattern pulsePattern = tryResolvePulsePattern(color.preferredPulsePatternName);
-            if (pulsePattern != null) {
-                lightDriver.setPattern(pulsePattern);
-                return;
-            }
-        }
-
-        // Stable mode OR pulse fallback when pulse pattern is not available.
-        lightDriver.setPattern(color.stablePattern);
+    private void applyColor(LightColor color) {
+        indicator.setPosition(color.servoPosition);
     }
 
-    private RevBlinkinLedDriver.BlinkinPattern tryResolvePulsePattern(String pulsePatternName) {
-        try {
-            return RevBlinkinLedDriver.BlinkinPattern.valueOf(pulsePatternName);
-        } catch (IllegalArgumentException ignored) {
-            return null;
-        }
-    }
-
-    private void applyOffPattern() {
-        lightDriver.setPattern(RevBlinkinLedDriver.BlinkinPattern.BLACK);
+    private void applyOffPosition() {
+        indicator.setPosition(OFF_SERVO_POSITION);
     }
 
     private void ensureInitialized() {
-        if (!initialized || lightDriver == null) {
+        if (!initialized || indicator == null) {
             throw new IllegalStateException("LightIndicator.init(hardwareMap) must be called before using the light.");
         }
     }
