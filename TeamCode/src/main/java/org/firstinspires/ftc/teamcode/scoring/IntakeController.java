@@ -46,18 +46,23 @@ public class IntakeController {
      * - No request stops all intake-side motion.
      */
     public void applyIntakeAndWindmillControl(boolean intakeMotorRequested, boolean feederRequested, boolean windmillRequested) {
+        applyIntakeAndWindmillControl(intakeMotorRequested, feederRequested, windmillRequested, false);
+    }
+
+    public void applyIntakeAndWindmillControl(boolean intakeMotorRequested, boolean feederRequested, boolean windmillRequested, boolean reverseIntakeRequested) {
         double intakeMotorPower;
+        double intakeDirection = reverseIntakeRequested ? -1.0 : 1.0;
 
         if (feederRequested) {
-            frontLeftFeeder.setPower(ScoringConfig.INTAKE_POWER);
-            frontRightFeeder.setPower(-ScoringConfig.INTAKE_POWER);
+            frontLeftFeeder.setPower(intakeDirection * ScoringConfig.INTAKE_POWER);
+            frontRightFeeder.setPower(-intakeDirection * ScoringConfig.INTAKE_POWER);
         } else {
             frontLeftFeeder.setPower(0.0);
             frontRightFeeder.setPower(0.0);
         }
 
         if (intakeMotorRequested) {
-            intakeMotorPower = ScoringConfig.INTAKE_POWER;
+            intakeMotorPower = intakeDirection * ScoringConfig.INTAKE_POWER;
         } else {
             intakeMotorPower = 0.0;
         }
