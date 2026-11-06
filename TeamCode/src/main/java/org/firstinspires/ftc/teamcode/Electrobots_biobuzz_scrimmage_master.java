@@ -20,6 +20,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 @TeleOp(name = "Teleop-Scrimmage_v1", group = "Scrimmage")
 
 public class Electrobots_biobuzz_scrimmage_master extends OpMode {
+    private static final double SCORABLE_ROLL_ABS_MAX_DEG = 90.0;
     private static boolean preserveFieldNorthFromAuto;
 
     public static void markFieldNorthFromAuto() {
@@ -88,7 +89,9 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
             return;
         }
 
-        if (snapToAprilTagHelper.isScoringSideCluster(snapTelemetry.clusterName)) {
+        boolean scoringBinFound = Math.abs(snapTelemetry.rollDegrees) < SCORABLE_ROLL_ABS_MAX_DEG;
+
+        if (scoringBinFound) {
             lightIndicator.state(true, LightIndicator.GREEN);
         } else {
             lightIndicator.state(true, LightIndicator.BLUE);
