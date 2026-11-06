@@ -180,7 +180,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
         // Choose team/start profile, then it sets the target AprilTag.
         // Keep profile in a variable so we can reuse it for indicator color selection.
-        placementProfile = RED_1; // Change this if your side/starting position changes.
+//        placementProfile = RED_1; // Change this if your side/starting position changes.
 
         robotPlacement = new Robot_Placement();
         robotPlacement.init(placementProfile);
