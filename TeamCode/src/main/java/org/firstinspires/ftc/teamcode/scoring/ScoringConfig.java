@@ -12,7 +12,9 @@ public final class ScoringConfig {
     public static final double WINDMILL_POWER = 0.75;
     public static final double WINDMILL_INTAKE_ASSIST_POWER = 0.5;
 
+    /////////////in case you need to adjust shooter/flywheel speed at start, come here
     public static final double SHOOTER_BASELINE_RPM = 3100.0;
+    /////////////in case you need to adjust shooter/flywheel speed at start, come here
 
     public static final double SHOOTER_YAW_ADJUSTER = 100;
     public static final double SHOOTER_YAW_ADJUST_THRESHOLD_DEGREES = 20.0;

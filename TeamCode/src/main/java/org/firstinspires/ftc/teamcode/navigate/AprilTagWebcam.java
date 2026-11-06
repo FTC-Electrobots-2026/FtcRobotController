@@ -133,18 +133,18 @@ public class AprilTagWebcam {
         detectedTags.addAll(newDetections);
 
         telemetry.clearAll(); // Keep display fresh: show only latest camera info each loop.
-        telemetry.addData("AprilTag found", hasDetections ? "Y" : "N");
-        tagDetected = hasDetections;
         if (hasDetections) {
             filteredDetectionFound = renderDetections();
         }
+        telemetry.addData("AprilTag found", filteredDetectionFound ? "Y" : "N");
+        tagDetected = filteredDetectionFound;
         telemetry.update();
 
         // Return true only when at least one detection passed the active filters.
         // Active filters are:
         // 1) Target tag name (if configured), and
         // 2) Scorable orientation (|roll| < 90 deg).
-        return hasDetections && filteredDetectionFound;
+        return filteredDetectionFound;
 
     }
 
@@ -247,6 +247,11 @@ public class AprilTagWebcam {
      */
     public SnapTelemetry getSnapTelemetry() {
         int visibleTagCount = detectedTags.size();
+        boolean targetFilterConfigured = hasTargetFilterConfigured();
+
+        AprilTagDetection selectedClusterDetection = null;
+        AprilTagClusterDetection selectedCluster = null;
+        boolean selectedClusterScorable = false;
 
         for (AprilTagDetection detection : detectedTags) {
             if (detection instanceof AprilTagClusterDetection) {
@@ -255,40 +260,63 @@ public class AprilTagWebcam {
                         ? clusterDetection.metadata.name
                         : "Unknown";
 
-                if (detection.ftcPose == null) {
-                    return new SnapTelemetry(
-                            visibleTagCount,
-                            true,
-                            clusterName,
-                            clusterDetection.percentClusterFound,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0
-                    );
+                if (targetFilterConfigured && !isTargetTagName(clusterName)) {
+                    continue;
                 }
 
+                boolean scorable = isScorableByRoll(detection);
+
+                if (selectedClusterDetection == null || (scorable && !selectedClusterScorable)) {
+                    selectedClusterDetection = detection;
+                    selectedCluster = clusterDetection;
+                    selectedClusterScorable = scorable;
+                }
+
+                // Prefer alliance cluster that is currently scorable (bin up) when both are visible.
+                if (selectedClusterScorable) {
+                    break;
+                }
+            }
+        }
+
+        if (selectedClusterDetection != null && selectedCluster != null) {
+            String clusterName = (selectedCluster.metadata != null)
+                    ? selectedCluster.metadata.name
+                    : "Unknown";
+
+            if (selectedClusterDetection.ftcPose == null) {
                 return new SnapTelemetry(
                         visibleTagCount,
                         true,
                         clusterName,
-                        clusterDetection.percentClusterFound,
-                        detection.ftcPose.x,
-                        detection.ftcPose.y,
-                        detection.ftcPose.z,
-                        detection.ftcPose.pitch,
-                        detection.ftcPose.roll,
-                        detection.ftcPose.yaw,
-                        detection.ftcPose.range,
-                        detection.ftcPose.bearing,
-                        detection.ftcPose.elevation
+                        selectedCluster.percentClusterFound,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0
                 );
             }
+
+            return new SnapTelemetry(
+                    visibleTagCount,
+                    true,
+                    clusterName,
+                    selectedCluster.percentClusterFound,
+                    selectedClusterDetection.ftcPose.x,
+                    selectedClusterDetection.ftcPose.y,
+                    selectedClusterDetection.ftcPose.z,
+                    selectedClusterDetection.ftcPose.pitch,
+                    selectedClusterDetection.ftcPose.roll,
+                    selectedClusterDetection.ftcPose.yaw,
+                    selectedClusterDetection.ftcPose.range,
+                    selectedClusterDetection.ftcPose.bearing,
+                    selectedClusterDetection.ftcPose.elevation
+            );
         }
 
         return SnapTelemetry.noCluster(visibleTagCount);
@@ -315,6 +343,48 @@ public class AprilTagWebcam {
     private boolean renderDetections() {
         boolean filteredDetectionFound = false;
         boolean targetFilterConfigured = hasTargetFilterConfigured();
+        boolean clusterSeen = false;
+
+        for (AprilTagDetection detection : detectedTags) {
+            if (!(detection instanceof AprilTagClusterDetection)) {
+                continue;
+            }
+
+            clusterSeen = true;
+            AprilTagClusterDetection clusterDet = (AprilTagClusterDetection) detection;
+            String clusterName = (clusterDet.metadata != null) ? clusterDet.metadata.name : "Unknown";
+            boolean targetMatch = !targetFilterConfigured || isTargetTagName(clusterName);
+
+            if (!targetMatch) {
+                continue;
+            }
+
+            boolean scorable = isScorableByRoll(detection);
+
+            telemetry.addData("ID", "N/A (cluster)");
+            telemetry.addLine(String.format("\n==== Alliance Cluster (%s)", clusterName));
+            telemetry.addData("Target Tag Found", "Y");
+            telemetry.addData("Scorable Cell", scorable ? "Y" : "N");
+            telemetry.addLine(String.format(Locale.US, "Percent tags found: %d", clusterDet.percentClusterFound));
+            if (detection.ftcPose != null) {
+                telemetry.addLine(String.format(Locale.US, "XYZ %6.1f %6.1f %6.1f  (inch)", detection.ftcPose.x, detection.ftcPose.y, detection.ftcPose.z));
+                telemetry.addLine(String.format(Locale.US, "PRY %6.1f %6.1f %6.1f  (deg)", detection.ftcPose.pitch, detection.ftcPose.roll, detection.ftcPose.yaw));
+                telemetry.addLine(String.format(Locale.US, "RBE %6.1f %6.1f %6.1f  (inch, deg, deg)", detection.ftcPose.range, detection.ftcPose.bearing, detection.ftcPose.elevation));
+            }
+
+            if (scorable && detection.ftcPose != null) {
+                filteredDetectionFound = true;
+                x_value = detection.ftcPose.x;
+                y_value = detection.ftcPose.y;
+                percent_value = clusterDet.percentClusterFound;
+            }
+            return filteredDetectionFound;
+        }
+
+        if (clusterSeen) {
+            telemetry.addData("Alliance Cluster Found", "N");
+            return false;
+        }
 
         for (AprilTagDetection detection : detectedTags) {
             if (detection instanceof AprilTagSingleDetection) {

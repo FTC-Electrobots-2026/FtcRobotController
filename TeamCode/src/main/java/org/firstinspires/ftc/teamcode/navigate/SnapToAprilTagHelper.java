@@ -4,7 +4,7 @@ import org.firstinspires.ftc.robotcore.external.Telemetry;
 
 /**
  * Minimal snap-to-AprilTag helper:
- * - drive only on the field north/south axis from y error,
+ * - drive only on the field north/south axis from x error,
  * - treat snap as successful at 75%+ cluster detection.
  */
 public class SnapToAprilTagHelper {
@@ -17,8 +17,8 @@ public class SnapToAprilTagHelper {
     private static final double SNAP_WEST_SHIFT_ROTATIONS = 1.5;
     private static final double SNAP_FORWARD_POWER = 0.2;
     private static final double SNAP_SEARCH_POWER = 0.12;
-    private static final double TARGET_Y_INCHES = 5.0;
-    private static final double Y_HOLD_TOLERANCE_INCHES = 0.5;
+    private static final double TARGET_X_INCHES = 5.0;
+    private static final double X_HOLD_TOLERANCE_INCHES = 0.5;
     private static final double SNAP_CLUSTER_LOCK_PERCENT = 75.0;
 
     private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
@@ -190,13 +190,21 @@ public class SnapToAprilTagHelper {
             return;
         }
 
-        // Legacy mode yaw assist:
-        // - scoring side => left trigger snap target
+        boolean isRedAlliance = placementProfile == RED_1 || placementProfile == RED_2;
+
+        // Legacy mode yaw assist matrix:
+        // RED alliance:
+        // - scoring side  => left trigger snap target
         // - audience side => right trigger snap target
+        // BLUE alliance:
+        // - audience side => left trigger snap target
+        // - scoring side  => right trigger snap target
         if (snapRequestEdge && !snapMecanumMover.isSnapTurnActive()) {
-            if (isScoringSideCluster(snapTelemetry.clusterName)) {
+            if ((isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName))
+                    || (!isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName))) {
                 snapMecanumMover.snapTurnLeftTriggerShortcut();
-            } else if (isAudienceSideCluster(snapTelemetry.clusterName)) {
+            } else if ((isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName))
+                    || (!isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName))) {
                 snapMecanumMover.snapTurnRightTriggerShortcut();
             }
         }
@@ -229,13 +237,13 @@ public class SnapToAprilTagHelper {
             return;
         }
 
-        // Field-axis correction only: move north/south until y reaches target band.
-        double yErrorInches = snapTelemetry.yInches - TARGET_Y_INCHES;
+        // Read/compare X, but still command motion only on field north/south axis.
+        double xErrorInches = snapTelemetry.xInches - TARGET_X_INCHES;
         double forwardPower;
-        if (yErrorInches > Y_HOLD_TOLERANCE_INCHES) {
+        if (xErrorInches > X_HOLD_TOLERANCE_INCHES) {
             forwardPower = SNAP_FORWARD_POWER;
             lastForwardDirection = 1.0;
-        } else if (yErrorInches < -Y_HOLD_TOLERANCE_INCHES) {
+        } else if (xErrorInches < -X_HOLD_TOLERANCE_INCHES) {
             forwardPower = -SNAP_FORWARD_POWER;
             lastForwardDirection = -1.0;
         } else {
