@@ -16,6 +16,7 @@ public class SnapToAprilTagHelper {
     private static final double SNAP_EAST_SHIFT_ROTATIONS = 1.5;
     private static final double SNAP_WEST_SHIFT_ROTATIONS = 1.5;
     private static final double SNAP_FORWARD_POWER = 0.2;
+    private static final double SNAP_SEARCH_POWER = 0.12;
     private static final double TARGET_Y_INCHES = 5.0;
     private static final double Y_HOLD_TOLERANCE_INCHES = 0.5;
     private static final double SNAP_CLUSTER_LOCK_PERCENT = 75.0;
@@ -23,6 +24,7 @@ public class SnapToAprilTagHelper {
     private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
     private boolean snapRecoveryMoveEast;
     private boolean snapRecoveryMoveTargetInitialized;
+    private double lastForwardDirection = 1.0;
 
     private enum SnapRecoveryPhase {
         IDLE,
@@ -155,10 +157,11 @@ public class SnapToAprilTagHelper {
             apply(snapMecanumMover, snapTelemetry);
 
             if (snapTelemetry == null || !snapTelemetry.hasCluster || isSnapSuccessful(snapTelemetry)) {
+                // Final turn should unwind the initial shortcut turn so heading returns to pre-recovery orientation.
                 if (snapRecoveryMoveEast) {
-                    snapMecanumMover.snapTurnRightTriggerShortcut();
-                } else {
                     snapMecanumMover.snapTurnLeftTriggerShortcut();
+                } else {
+                    snapMecanumMover.snapTurnRightTriggerShortcut();
                 }
                 snapRecoveryPhase = SnapRecoveryPhase.TURN_FINAL;
             }
@@ -183,7 +186,7 @@ public class SnapToAprilTagHelper {
             return;
         }
 
-        if (!snapTelemetry.hasCluster || !isPlacementColorMatch(placementProfile, snapTelemetry.clusterName)) {
+        if (!snapTelemetry.hasCluster) {
             return;
         }
 
@@ -203,12 +206,8 @@ public class SnapToAprilTagHelper {
             return;
         }
 
-        // In legacy mode, strafe alignment is used only on scoring-side target clusters.
-        if (isScoringSideCluster(snapTelemetry.clusterName)) {
-            apply(snapMecanumMover, snapTelemetry);
-        } else {
-            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
-        }
+        // Always run snap correction in legacy mode when cluster telemetry exists.
+        apply(snapMecanumMover, snapTelemetry);
     }
 
     public boolean isSnapSuccessful(AprilTagWebcam.SnapTelemetry snapTelemetry) {
@@ -231,13 +230,17 @@ public class SnapToAprilTagHelper {
         }
 
         // Field-axis correction only: move north/south until y reaches target band.
+        double yErrorInches = snapTelemetry.yInches - TARGET_Y_INCHES;
         double forwardPower;
-        if (snapTelemetry.yInches > TARGET_Y_INCHES + Y_HOLD_TOLERANCE_INCHES) {
+        if (yErrorInches > Y_HOLD_TOLERANCE_INCHES) {
             forwardPower = SNAP_FORWARD_POWER;
-        } else if (snapTelemetry.yInches < TARGET_Y_INCHES - Y_HOLD_TOLERANCE_INCHES) {
+            lastForwardDirection = 1.0;
+        } else if (yErrorInches < -Y_HOLD_TOLERANCE_INCHES) {
             forwardPower = -SNAP_FORWARD_POWER;
+            lastForwardDirection = -1.0;
         } else {
-            forwardPower = 0.0;
+            // If lock is still low inside hold band, keep searching on N/S axis instead of stalling.
+            forwardPower = lastForwardDirection * SNAP_SEARCH_POWER;
         }
 
         snapMecanumMover.driveFieldRelative(forwardPower, 0.0, 0.0);

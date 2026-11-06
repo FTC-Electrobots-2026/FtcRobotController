@@ -34,8 +34,18 @@ public class AutoPos2 extends LinearOpMode {
     private static final double WINDMILL_ON_SECONDS = 0.35;
     private static final double WINDMILL_OFF_SECONDS = 0.15;
     private static final double AUTO_WINDMILL_POWER = 0.6;
-    private static final int WINDMILL_CYCLES = 8;
-    private static final double POST_WINDMILL_MOVE_TIMEOUT_SECONDS = 10.0;
+    private static final int WINDMILL_CYCLES = 10;
+    private static final double POST_WINDMILL_MOVE_TIMEOUT_SECONDS = 15.0;
+
+    // Tile convention for AutoPos2 only:
+    // - Southwest (bottom/left) tile is 1A.
+    // - Row increases south->north: 1..6.
+    // - Column increases west->east: A..F.
+    private static final String START_TILE = "1A";
+    private static final double START_HEADING_DEGREES = 0.0;
+
+    private static final int FIELD_TILES_PER_SIDE = 6;
+    private static final double TILE_SIZE_INCHES = MecanumWheelMotorOdometry.FIELD_SIZE_INCHES / FIELD_TILES_PER_SIDE;
 
     @Override
     public void runOpMode() {
@@ -96,6 +106,7 @@ public class AutoPos2 extends LinearOpMode {
         // Define field north at autonomous start and preserve it for auto->teleop flow.
         imu.resetYaw();
         Electrobots_biobuzz_scrimmage_master.markFieldNorthFromAuto();
+        applyStartTilePose(snapMecanumMover, START_TILE, START_HEADING_DEGREES);
 
         // 1) Move left 0.25 rotations before starting snap turn.
         AutoRunner preTurnMove = new AutoRunner(snapMecanumMover)
@@ -229,15 +240,14 @@ public class AutoPos2 extends LinearOpMode {
         // 6) After windmill cycles, move backward by 2.5 wheel rotations using existing auto command flow.
         AutoRunner autoRunner = new AutoRunner(snapMecanumMover)
                 .MoveBackward(3.4)
-                .MoveLeft(6.0)
-                .MoveLeft(6.0);
+                .MoveLeft(8.0);
 
 
         ElapsedTime moveTimer = new ElapsedTime();
         moveTimer.reset();
         while (opModeIsActive() && !isStopRequested() && moveTimer.seconds() <= POST_WINDMILL_MOVE_TIMEOUT_SECONDS) {
-            shooterController.applyShooterSpeedControl(true, 0.0);
-            intakeController.applyIntakeAndWindmillControl(false, false, false);
+            //shooterController.applyShooterSpeedControl(true, 0.0);
+            //intakeController.applyIntakeAndWindmillControl(false, false, false);
 
             boolean done = autoRunner.update();
             MecanumWheelMotorOdometry.Pose2d pose = snapMecanumMover.getOdometry().getPose();
@@ -262,6 +272,43 @@ public class AutoPos2 extends LinearOpMode {
         shooterController.stop();
         snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
         snapMecanumMover.cancelTarget();
+    }
+
+    private void applyStartTilePose(SnapMecanumMover snapMecanumMover, String tileLabel, double headingDegrees) {
+        snapMecanumMover.initializeOdometry();
+
+        TileCoordinate tile = parseTileLabel(tileLabel);
+        double xInches = (tile.columnIndex + 0.5) * TILE_SIZE_INCHES;
+        double yInches = (tile.rowIndex + 0.5) * TILE_SIZE_INCHES;
+
+        snapMecanumMover.getOdometry().resetPose(xInches, yInches, Math.toRadians(headingDegrees));
+    }
+
+    private TileCoordinate parseTileLabel(String tileLabel) {
+        if (tileLabel == null || tileLabel.length() < 2) {
+            throw new IllegalArgumentException("Tile label must look like 1A through 6F.");
+        }
+
+        char rowChar = tileLabel.charAt(0);
+        char columnChar = Character.toUpperCase(tileLabel.charAt(1));
+
+        if (rowChar < '1' || rowChar > '6' || columnChar < 'A' || columnChar > 'F') {
+            throw new IllegalArgumentException("Tile label must be in range 1A..6F.");
+        }
+
+        int rowIndex = (rowChar - '1');
+        int columnIndex = (columnChar - 'A');
+        return new TileCoordinate(rowIndex, columnIndex);
+    }
+
+    private static class TileCoordinate {
+        final int rowIndex;
+        final int columnIndex;
+
+        TileCoordinate(int rowIndex, int columnIndex) {
+            this.rowIndex = rowIndex;
+            this.columnIndex = columnIndex;
+        }
     }
 }
 
