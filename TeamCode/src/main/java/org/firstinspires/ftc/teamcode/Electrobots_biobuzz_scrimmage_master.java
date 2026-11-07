@@ -58,7 +58,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
 
     // true: run full scoring-bin recovery flow (turn + lateral move + re-snap).
     // false: legacy mode (no east/west move), with side-based yaw snap assist only.
-    private static final boolean SNAP_TO_SCORING_BIN = false;
+    private static final boolean SNAP_TO_SCORING_BIN = true;
 
     private IntakeController intakeController;
     private ShooterController shooterController;
@@ -68,7 +68,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     // Light helper for driver-facing state feedback.
     private LightIndicator lightIndicator;
     /////**************change only this*********////
-    private int placementProfile = RED_1;
+    private int placementProfile = BLUE_1;
     /////**************change only this*********////
     private boolean previousSnapRequest;
 
@@ -249,33 +249,16 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
         previousSnapRequest = driverSnappingRequested;
         //telemetry.addData("tag detected value:", tagDetected);
 
-        if (!SNAP_TO_SCORING_BIN && snapToAprilTagHelper.isRecoveryActive()) {
-            // Safety: if mode is switched to legacy behavior, stop any in-progress lateral recovery.
-            snapToAprilTagHelper.resetRecovery(snapMecanumMover);
-        }
-
-        if (snapToAprilTagHelper.shouldStartRecovery(
-                SNAP_TO_SCORING_BIN,
-                driverSnappingRequested,
-                placementProfile,
-                snapTelemetry
-        )) {
-            snapToAprilTagHelper.startRecovery(snapMecanumMover, snapTelemetry);
-        }
-
         // Passes both controllers and telemetry into the drive helper.
         // Last parameter tells helper whether auto-snap mode is active.
         // Pass A / A.1 refactor note: call contract is intentionally unchanged.
         boolean legacyYawSnapActive = !SNAP_TO_SCORING_BIN && snapMecanumMover.isSnapTurnActive();
-        boolean snapRoutineActive = driver_snapping || snapToAprilTagHelper.isRecoveryActive() || legacyYawSnapActive;
+        boolean snapRoutineActive = driver_snapping || legacyYawSnapActive;
         snapMecanumMover.loop(gamepad1, gamepad2, telemetry, snapRoutineActive);
 
-        if (SNAP_TO_SCORING_BIN && snapToAprilTagHelper.isRecoveryActive()) {
-            snapToAprilTagHelper.runRecoveryRoutine(snapMecanumMover, snapTelemetry, telemetry);
-            telemetry.addData("Snap recovery", snapToAprilTagHelper.getRecoveryPhaseName());
-        } else if (driver_snapping) {
+        if (driver_snapping) {
             if (SNAP_TO_SCORING_BIN) {
-                snapToAprilTagHelper.apply(snapMecanumMover, snapTelemetry);
+                snapToAprilTagHelper.applyScoringBinSnap(snapMecanumMover, snapTelemetry, placementProfile);
             } else {
                 snapToAprilTagHelper.runLegacySnapMode(
                         snapMecanumMover,
