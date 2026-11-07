@@ -18,11 +18,11 @@ public class SnapToAprilTagHelper {
     private static final double TARGET_X_INCHES = 5.0;
     private static final double X_HOLD_TOLERANCE_INCHES = 0.5;
     private static final double SNAP_CLUSTER_LOCK_PERCENT = 75.0;
-    private static final double SEGMENT_ONE_X_MIN = 14.0;
-    private static final double SEGMENT_ONE_X_MAX = 23.0;
-    private static final double SEGMENT_TWO_X_MIN = 15.0;
-    private static final double SEGMENT_TWO_X_MAX = 25.0;
-    private static final double SNAP_SCORING_BIN_COMPLETE_PERCENT = 100.0;
+    private static final double X_RED_SCORIING = 16.0;
+    private static final double X_RED_AUDIENCE = 18.0;
+    private static final double X_BLUE_AUDIENCE = 16.0;
+    private static final double X_BLUE_SCORING = 18.0;
+    private static final double X_THRESHOLD_TOLERANCE = 3.0;
 
     private double lastForwardDirection = 1.0;
 
@@ -65,32 +65,19 @@ public class SnapToAprilTagHelper {
             return;
         }
 
-        if (isScoringBinSnapSuccessful(snapTelemetry, placementProfile)) {
-            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
-            return;
-        }
-
         boolean isRedAlliance = placementProfile == RED_1 || placementProfile == RED_2;
-        boolean segmentOne = (isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName))
-                || (!isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName));
-
         double forwardPower = 0.0;
-        if (segmentOne) {
-            // Segment 1: red scoring / blue audience
-            // x < 0 => move north, x > 0 => move south
-            if (snapTelemetry.xInches < 0.0) {
-                forwardPower = SNAP_FORWARD_POWER;
-            } else if (snapTelemetry.xInches > 0.0) {
-                forwardPower = -SNAP_FORWARD_POWER;
-            }
+
+        if (isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName)) {
+            forwardPower = runRedScoringSnap(snapTelemetry.xInches);
+        } else if (isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName)) {
+            forwardPower = runRedAudienceSnap(snapTelemetry.xInches);
+        } else if (!isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName)) {
+            forwardPower = runBlueAudienceSnap(snapTelemetry.xInches);
+        } else if (!isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName)) {
+            forwardPower = runBlueScoringSnap(snapTelemetry.xInches);
         } else {
-            // Segment 2: red audience / blue scoring
-            // x < 0 => move south, x > 0 => move north
-            if (snapTelemetry.xInches < 0.0) {
-                forwardPower = -SNAP_FORWARD_POWER;
-            } else if (snapTelemetry.xInches > 0.0) {
-                forwardPower = SNAP_FORWARD_POWER;
-            }
+            forwardPower = 0.0;
         }
 
         // No search drift in scoring-bin mode.
@@ -103,19 +90,61 @@ public class SnapToAprilTagHelper {
         }
 
         boolean isRedAlliance = placementProfile == RED_1 || placementProfile == RED_2;
-        boolean segmentOne = (isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName))
-                || (!isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName));
-        boolean percentComplete = snapTelemetry.percentClusterFound >= SNAP_SCORING_BIN_COMPLETE_PERCENT;
+        double targetX;
 
-        if (!percentComplete) {
+        if (isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName)) {
+            targetX = X_RED_SCORIING;
+        } else if (isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName)) {
+            targetX = X_RED_AUDIENCE;
+        } else if (!isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName)) {
+            targetX = X_BLUE_AUDIENCE;
+        } else if (!isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName)) {
+            targetX = X_BLUE_SCORING;
+        } else {
             return false;
         }
 
-        if (segmentOne) {
-            return snapTelemetry.xInches >= SEGMENT_ONE_X_MIN && snapTelemetry.xInches <= SEGMENT_ONE_X_MAX;
-        }
+        return Math.abs(snapTelemetry.xInches - targetX) <= X_THRESHOLD_TOLERANCE;
+    }
 
-        return snapTelemetry.xInches >= SEGMENT_TWO_X_MIN && snapTelemetry.xInches <= SEGMENT_TWO_X_MAX;
+    // 1) RED + SCORING: x<threshold -> north, x>threshold -> south, within threshold -> stop.
+    private double runRedScoringSnap(double xInches) {
+        return computeSegmentOnePower(xInches, X_RED_SCORIING);
+    }
+
+    // 2) RED + AUDIENCE: x<threshold -> south, x>threshold -> north, within threshold -> stop.
+    private double runRedAudienceSnap(double xInches) {
+        return computeSegmentTwoPower(xInches, X_RED_AUDIENCE);
+    }
+
+    // 3) BLUE + AUDIENCE: x<threshold -> north, x>threshold -> south, within threshold -> stop.
+    private double runBlueAudienceSnap(double xInches) {
+        return computeSegmentOnePower(xInches, X_BLUE_AUDIENCE);
+    }
+
+    // 4) BLUE + SCORING: x<threshold -> south, x>threshold -> north, within threshold -> stop.
+    private double runBlueScoringSnap(double xInches) {
+        return computeSegmentTwoPower(xInches, X_BLUE_SCORING);
+    }
+
+    private double computeSegmentOnePower(double xInches, double targetX) {
+        if (xInches < targetX - X_THRESHOLD_TOLERANCE) {
+            return SNAP_FORWARD_POWER;
+        }
+        if (xInches > targetX + X_THRESHOLD_TOLERANCE) {
+            return -SNAP_FORWARD_POWER;
+        }
+        return 0.0;
+    }
+
+    private double computeSegmentTwoPower(double xInches, double targetX) {
+        if (xInches < targetX - X_THRESHOLD_TOLERANCE) {
+            return -SNAP_FORWARD_POWER;
+        }
+        if (xInches > targetX + X_THRESHOLD_TOLERANCE) {
+            return SNAP_FORWARD_POWER;
+        }
+        return 0.0;
     }
 
     public void runLegacySnapMode(
