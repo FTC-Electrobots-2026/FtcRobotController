@@ -13,26 +13,18 @@ public class SnapToAprilTagHelper {
     private static final int BLUE_1 = 3;
     private static final int BLUE_2 = 4;
 
-    private static final double SNAP_EAST_SHIFT_ROTATIONS = 1.5;
-    private static final double SNAP_WEST_SHIFT_ROTATIONS = 1.5;
     private static final double SNAP_FORWARD_POWER = 0.2;
     private static final double SNAP_SEARCH_POWER = 0.12;
     private static final double TARGET_X_INCHES = 5.0;
     private static final double X_HOLD_TOLERANCE_INCHES = 0.5;
     private static final double SNAP_CLUSTER_LOCK_PERCENT = 75.0;
+    private static final double SEGMENT_ONE_X_MIN = 14.0;
+    private static final double SEGMENT_ONE_X_MAX = 23.0;
+    private static final double SEGMENT_TWO_X_MIN = 15.0;
+    private static final double SEGMENT_TWO_X_MAX = 25.0;
+    private static final double SNAP_SCORING_BIN_COMPLETE_PERCENT = 100.0;
 
-    private SnapRecoveryPhase snapRecoveryPhase = SnapRecoveryPhase.IDLE;
-    private boolean snapRecoveryMoveEast;
-    private boolean snapRecoveryMoveTargetInitialized;
     private double lastForwardDirection = 1.0;
-
-    private enum SnapRecoveryPhase {
-        IDLE,
-        TURN_INITIAL,
-        MOVE_LATERAL,
-        SNAP_ALIGN,
-        TURN_FINAL
-    }
 
     public boolean isPlacementColorMatch(int placementProfile, String clusterName) {
         if (clusterName == null) {
@@ -58,121 +50,72 @@ public class SnapToAprilTagHelper {
         return clusterName != null && clusterName.contains("AUDIENCE");
     }
 
-    public boolean isRecoveryActive() {
-        return snapRecoveryPhase != SnapRecoveryPhase.IDLE;
-    }
-
-    public String getRecoveryPhaseName() {
-        return snapRecoveryPhase.name();
-    }
-
-    public void resetRecovery(SnapMecanumMover snapMecanumMover) {
-        if (snapMecanumMover != null) {
-            snapMecanumMover.cancelTarget();
-        }
-        snapRecoveryPhase = SnapRecoveryPhase.IDLE;
-        snapRecoveryMoveTargetInitialized = false;
-    }
-
-    public boolean shouldStartRecovery(
-            boolean snapToScoringBin,
-            boolean snapRequested,
-            int placementProfile,
-            AprilTagWebcam.SnapTelemetry snapTelemetry
+    public void applyScoringBinSnap(
+            SnapMecanumMover snapMecanumMover,
+            AprilTagWebcam.SnapTelemetry snapTelemetry,
+            int placementProfile
     ) {
-        if (!snapToScoringBin || !snapRequested || snapRecoveryPhase != SnapRecoveryPhase.IDLE) {
-            return false;
+        if (snapMecanumMover == null
+                || snapTelemetry == null
+                || !snapTelemetry.hasCluster
+                || !isPlacementColorMatch(placementProfile, snapTelemetry.clusterName)) {
+            if (snapMecanumMover != null) {
+                snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
+            }
+            return;
         }
 
+        if (isScoringBinSnapSuccessful(snapTelemetry, placementProfile)) {
+            snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
+            return;
+        }
+
+        boolean isRedAlliance = placementProfile == RED_1 || placementProfile == RED_2;
+        boolean segmentOne = (isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName))
+                || (!isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName));
+
+        double forwardPower = 0.0;
+        if (segmentOne) {
+            // Segment 1: red scoring / blue audience
+            // x < 0 => move north, x > 0 => move south
+            if (snapTelemetry.xInches < 0.0) {
+                forwardPower = SNAP_FORWARD_POWER;
+            } else if (snapTelemetry.xInches > 0.0) {
+                forwardPower = -SNAP_FORWARD_POWER;
+            }
+        } else {
+            // Segment 2: red audience / blue scoring
+            // x < 0 => move south, x > 0 => move north
+            if (snapTelemetry.xInches < 0.0) {
+                forwardPower = -SNAP_FORWARD_POWER;
+            } else if (snapTelemetry.xInches > 0.0) {
+                forwardPower = SNAP_FORWARD_POWER;
+            }
+        }
+
+        // No search drift in scoring-bin mode.
+        snapMecanumMover.driveFieldRelative(forwardPower, 0.0, 0.0);
+    }
+
+    private boolean isScoringBinSnapSuccessful(AprilTagWebcam.SnapTelemetry snapTelemetry, int placementProfile) {
         if (snapTelemetry == null || !snapTelemetry.hasCluster) {
             return false;
         }
 
-        // "Non scoring / tipped down" means the cluster is upside-down by roll test.
-        boolean nonScoringTippedDown = Math.abs(snapTelemetry.rollDegrees) >= 90.0;
-        if (!nonScoringTippedDown) {
+        boolean isRedAlliance = placementProfile == RED_1 || placementProfile == RED_2;
+        boolean segmentOne = (isRedAlliance && isScoringSideCluster(snapTelemetry.clusterName))
+                || (!isRedAlliance && isAudienceSideCluster(snapTelemetry.clusterName));
+        boolean percentComplete = snapTelemetry.percentClusterFound >= SNAP_SCORING_BIN_COMPLETE_PERCENT;
+
+        if (!percentComplete) {
             return false;
         }
 
-        return isPlacementColorMatch(placementProfile, snapTelemetry.clusterName);
-    }
-
-    public void startRecovery(SnapMecanumMover snapMecanumMover, AprilTagWebcam.SnapTelemetry snapTelemetry) {
-        if (snapMecanumMover == null || snapTelemetry == null) {
-            return;
+        if (segmentOne) {
+            return snapTelemetry.xInches >= SEGMENT_ONE_X_MIN && snapTelemetry.xInches <= SEGMENT_ONE_X_MAX;
         }
 
-        boolean audienceSide = isAudienceSideCluster(snapTelemetry.clusterName);
-
-        // If the non-scoring tag is audience side => left trigger + west shift.
-        // Else => right trigger + east shift.
-        snapRecoveryMoveEast = !audienceSide;
-        snapRecoveryMoveTargetInitialized = false;
-
-        if (snapRecoveryMoveEast) {
-            snapMecanumMover.snapTurnRightTriggerShortcut();
-        } else {
-            snapMecanumMover.snapTurnLeftTriggerShortcut();
-        }
-
-        snapRecoveryPhase = SnapRecoveryPhase.TURN_INITIAL;
-    }
-
-    public void runRecoveryRoutine(
-            SnapMecanumMover snapMecanumMover,
-            AprilTagWebcam.SnapTelemetry snapTelemetry,
-            Telemetry telemetry
-    ) {
-        if (snapMecanumMover == null) {
-            return;
-        }
-
-        if (snapRecoveryPhase == SnapRecoveryPhase.TURN_INITIAL) {
-            if (snapMecanumMover.stepSnapTurn(telemetry)) {
-                snapRecoveryPhase = SnapRecoveryPhase.MOVE_LATERAL;
-                snapRecoveryMoveTargetInitialized = false;
-            }
-            return;
-        }
-
-        if (snapRecoveryPhase == SnapRecoveryPhase.MOVE_LATERAL) {
-            if (!snapRecoveryMoveTargetInitialized) {
-                MecanumWheelMotorOdometry.Pose2d pose = snapMecanumMover.getOdometry().getPose();
-                double shiftInches = (snapRecoveryMoveEast ? SNAP_EAST_SHIFT_ROTATIONS : SNAP_WEST_SHIFT_ROTATIONS)
-                        * MecanumWheelMotorOdometry.WHEEL_CIRCUMFERENCE_INCHES;
-                double targetX = pose.xInches + (snapRecoveryMoveEast ? shiftInches : -shiftInches);
-
-                snapMecanumMover.setTargetPose(targetX, pose.yInches, pose.headingRadians);
-                snapRecoveryMoveTargetInitialized = true;
-            }
-
-            if (snapMecanumMover.navigateToTarget()) {
-                snapMecanumMover.cancelTarget();
-                snapRecoveryPhase = SnapRecoveryPhase.SNAP_ALIGN;
-            }
-            return;
-        }
-
-        if (snapRecoveryPhase == SnapRecoveryPhase.SNAP_ALIGN) {
-            apply(snapMecanumMover, snapTelemetry);
-
-            if (snapTelemetry == null || !snapTelemetry.hasCluster || isSnapSuccessful(snapTelemetry)) {
-                // Final turn should unwind the initial shortcut turn so heading returns to pre-recovery orientation.
-                if (snapRecoveryMoveEast) {
-                    snapMecanumMover.snapTurnLeftTriggerShortcut();
-                } else {
-                    snapMecanumMover.snapTurnRightTriggerShortcut();
-                }
-                snapRecoveryPhase = SnapRecoveryPhase.TURN_FINAL;
-            }
-            return;
-        }
-
-        if (snapRecoveryPhase == SnapRecoveryPhase.TURN_FINAL) {
-            if (snapMecanumMover.stepSnapTurn(telemetry)) {
-                snapRecoveryPhase = SnapRecoveryPhase.IDLE;
-            }
-        }
+        return snapTelemetry.xInches >= SEGMENT_TWO_X_MIN && snapTelemetry.xInches <= SEGMENT_TWO_X_MAX;
     }
 
     public void runLegacySnapMode(
