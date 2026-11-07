@@ -36,12 +36,16 @@ public class AutoPos2 extends LinearOpMode {
     private static final double AUTO_WINDMILL_POWER = 0.6;
     private static final int WINDMILL_CYCLES = 10;
     private static final double POST_WINDMILL_MOVE_TIMEOUT_SECONDS = 15.0;
+    private static final double LAST_RUN_BACK_POWER = 0.5;
+    private static final double LAST_RUN_LEFT_POWER = 0.5;
+    private static final double LAST_RUN_BACK_SECONDS = 1.7;
+    private static final double LAST_RUN_LEFT_SECONDS = 2.8;
 
     // Tile convention for AutoPos2 only:
     // - Southwest (bottom/left) tile is 1A.
     // - Row increases south->north: 1..6.
     // - Column increases west->east: A..F.
-    private static final String START_TILE = "1A";
+    private static final String START_TILE = "6C";
     private static final double START_HEADING_DEGREES = 0.0;
 
     private static final int FIELD_TILES_PER_SIDE = 6;
@@ -237,11 +241,8 @@ public class AutoPos2 extends LinearOpMode {
             }
         }
 
-        // 6) After windmill cycles, move backward by 2.5 wheel rotations using existing auto command flow.
-        AutoRunner autoRunner = new AutoRunner(snapMecanumMover)
-                .MoveBackward(3.4)
-                .MoveLeft(8.0);
-
+        // 6) After windmill cycles, final run uses open-loop power/time (no pose targeting).
+        double lastRunTotalSeconds = LAST_RUN_BACK_SECONDS + LAST_RUN_LEFT_SECONDS;
 
         ElapsedTime moveTimer = new ElapsedTime();
         moveTimer.reset();
@@ -249,12 +250,29 @@ public class AutoPos2 extends LinearOpMode {
             //shooterController.applyShooterSpeedControl(true, 0.0);
             //intakeController.applyIntakeAndWindmillControl(false, false, false);
 
-            boolean done = autoRunner.update();
+            double elapsed = moveTimer.seconds();
+            boolean done;
+
+            if (elapsed < LAST_RUN_BACK_SECONDS) {
+                // backward in field frame
+                snapMecanumMover.driveFieldRelative(-LAST_RUN_BACK_POWER, 0.0, 0.0);
+                done = false;
+                telemetry.addData("Step", "Last run: back");
+            } else if (elapsed < lastRunTotalSeconds) {
+                // left in field frame
+                snapMecanumMover.driveFieldRelative(0.0, -LAST_RUN_LEFT_POWER, 0.0);
+                done = false;
+                telemetry.addData("Step", "Last run: left");
+            } else {
+                snapMecanumMover.driveFieldRelative(0.0, 0.0, 0.0);
+                done = true;
+                telemetry.addData("Step", "Last run: done");
+            }
+
             MecanumWheelMotorOdometry.Pose2d pose = snapMecanumMover.getOdometry().getPose();
 
-            telemetry.addData("Step", "Move back 2.5 rotations");
             telemetry.addData("Done", done ? "YES" : "NO");
-            telemetry.addData("Pending", autoRunner.getPendingCommandCount());
+            telemetry.addData("Pending", done ? 0 : 1);
             telemetry.addData("Pose", "x=%.1f y=%.1f h=%.1f", pose.xInches, pose.yInches, Math.toDegrees(pose.headingRadians));
             telemetry.addData("Time", "%.1f / %.1f", moveTimer.seconds(), POST_WINDMILL_MOVE_TIMEOUT_SECONDS);
             telemetry.update();
@@ -265,7 +283,7 @@ public class AutoPos2 extends LinearOpMode {
             idle();
         }
 
-        autoRunner.clear();
+        snapMecanumMover.cancelTarget();
         windmillServo.setPower(0.0);
 
         intakeController.stop();
