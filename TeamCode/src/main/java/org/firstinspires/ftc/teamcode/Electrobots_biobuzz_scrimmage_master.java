@@ -68,7 +68,7 @@ public class Electrobots_biobuzz_scrimmage_master extends OpMode {
     // Light helper for driver-facing state feedback.
     private LightIndicator lightIndicator;
     /////**************change only this*********////
-    private int placementProfile = BLUE_1;
+    private int placementProfile = RED_1;
     /////**************change only this*********////
     private boolean previousSnapRequest;
 
